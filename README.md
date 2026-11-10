@@ -1,197 +1,120 @@
-# J.A.R.V.I.S.
+# J.A.R.V.I.S. — a personal desktop assistant for Windows
 
-A browser voice assistant with an Iron Man holographic interface. Say
-**"Hey Jarvis"**, he wakes, listens, and does real things through your tools —
-searches the web, generates images, drives your phone, reads your mail. The face
-is a web page (React + Vite + Three.js + custom GLSL). The brain is Claude Code,
-run headless as a library.
+A voice assistant with an Iron Man–style interface that actually runs your PC.
+Say **"Hey Jarvis"** — even when he's switched off — and he opens, listens, and
+gets on with it: opening apps and folders, finding and moving files, sending
+WhatsApp messages and files, setting reminders, reading your screen, checking
+your mail and calendar, and answering like the JARVIS from the films.
 
-**The only subscription you need is Claude Code.** No API keys, no OpenAI
-account, no cloud bill — the brain runs on your existing Claude Code login, and
-the heavy work (the model itself) runs on Anthropic's servers, so even a low-end
-laptop only has to draw the interface. **ElevenLabs is an optional add-on** that
-gives JARVIS a much better voice and sharper hearing; without it he speaks and
-listens through the browser's own speech, and everything still works.
+The face is a web page (React + Vite + Three.js) in its own Chrome window. The
+brain is **Claude Code, run headless** through the Claude Agent SDK — so it uses
+your existing Claude Code login. No API key is required.
+
+---
+
+## What he can do
+
+**Your PC**
+- Open any installed app ("open Spotify", "open VS Code", "open settings")
+- Open folders in Explorer ("open downloads", "open this PC")
+- Find, list, copy, move, rename and recycle files
+- Copy a file's name, path or the file itself to the clipboard
+- Act on whatever is **selected in File Explorer** ("copy this file's name")
+- **See your screen** — "what's on my screen?", "explain this error"
+- Type text into the window you're using
+- Battery, Wi-Fi, disk and memory status; brightness; volume and media keys
+- Play music on YouTube or Spotify
+- Lock, sleep, shut down or restart (he asks before shutting down)
+- Anything else through PowerShell
+
+**WhatsApp** (WhatsApp Web, in its own logged-in Chrome window)
+- "Message Mum saying I'll be late" · "send the report in downloads to Sarah"
+- Read unread messages, read or summarise a chat or group
+- Contacts with emoji in their names work; ambiguous names are never guessed
+
+**A personal assistant**
+- **Memory** — "remember that my exam is on the 20th"; he remembers across restarts
+- **Reminders and timers** — spoken aloud with a Windows notification
+- **Scheduled WhatsApp messages** — "wish Sarah happy birthday at 12 am"
+- **Weather**, and a **morning briefing** ("good morning, Jarvis")
+- **Gmail and Google Calendar** through your Claude account's connectors
+
+**The experience**
+- **"Hey Jarvis" works like "Hey Google"** — an offline wake-word detector
+  answers in a fraction of a second, chimes, and listens. It cuts through him
+  mid-sentence, and it **starts him when he's off**.
+- A **desktop ON/OFF switch** — nothing starts with Windows; the switch arms him
+- An instant **loading screen**, then a live **telemetry HUD**: clock, CPU and
+  RAM gauges, weather, battery and Wi-Fi, schedule, activity log, and an app dock
+- A **British voice** and a natural, film-style personality — calm, polished,
+  dry wit, "sir" in the right places
 
 ---
 
 ## Requirements
 
-**In one line:** a Claude Code subscription, plus two free things every computer
-can have — Node.js and Chrome. That's the whole list.
-
-- **Claude Code, installed and logged in** — this is the only account you need.
-  Install it with the official method — `npm install -g @anthropic-ai/claude-code`,
-  or the platform installer at <https://docs.claude.com/en/docs/claude-code> —
-  then run `claude` once and complete login. The bridge reuses that login. **No
-  API key**, and usage is billed to your existing Claude account.
-- **Node.js 20 or newer** — free, one installer from <https://nodejs.org>. This
-  is a Node web app, so it is the one unavoidable tool.
-- **Google Chrome or Microsoft Edge**, in a **real browser window** — not an
-  embedded preview pane. Preview panes (including the one inside editors and
-  Claude Code) block microphone access, so the page loads and looks right but
-  never hears you. JARVIS also needs WebGL, which these browsers provide.
-- **Optional: an ElevenLabs API key** — a good add-on, not a requirement. It
-  gives a better voice and sharper transcription; the free tier is plenty for a
-  demo. Without it, everything runs on the browser's own speech.
-
-Run `npm run setup` after cloning and it checks all of this for you, in plain
-language.
+- **Windows 10 or 11**
+- **Claude Code, installed and logged in** — `npm install -g @anthropic-ai/claude-code`,
+  then run `claude` once and log in. Usage is billed to your Claude account.
+- **Node.js 20+** — <https://nodejs.org>
+- **Google Chrome**
+- **Python 3.10+** — only for the offline "Hey Jarvis" wake word and the
+  ON/OFF switch. Everything else works without it.
+- *Optional:* an **NVIDIA GPU** for the neural Kokoro voice, and an
+  **ElevenLabs API key** for a premium voice and transcription.
 
 ---
 
-## Quick start
+## Setup
 
-First, install, then start it:
-
-```bash
-npm install
-npm start          # runs the brain and the face together
-```
-
-Then open the URL it prints (http://localhost:5173) in **Chrome**, click **INITIALISE**, and say **“Hey Jarvis”**.
-
-Prefer two terminals? Run them separately instead:
-
-```bash
+```bat
+git clone https://github.com/SujithM2006-des/jarvis_v1.git
+cd jarvis_v1
 npm install
 ```
 
-Terminal 1 — the brain:
+Optional settings go in `.env.local` (copy `.env.example`). A good start:
 
-```bash
-npm run bridge
+```ini
+VITE_TTS_ENGINE=system
+VITE_SYSTEM_VOICE=Google UK English Male
+VITE_VOICE_RATE=1.2
+VITE_SPEECH_LANG=en-IN
+VITE_MUSIC_AMBIENT=off
 ```
 
-Terminal 2 — the face:
+### The "Hey Jarvis" wake word and the desktop switch
 
-```bash
-npm run dev
+The wake word runs in its own small Python environment:
+
+```bat
+python -m venv "%USERPROFILE%\.jarvis\wake-venv"
+"%USERPROFILE%\.jarvis\wake-venv\Scripts\python.exe" -m pip install openwakeword sounddevice numpy
 ```
 
-Then open the app in a **real Chrome or Edge window**:
+Then put the switch on your desktop:
 
-```bash
-open http://localhost:5173
+```bat
+powershell -ExecutionPolicy Bypass -File scripts\jarvis-switch.ps1 -Install
 ```
 
-Click **INITIALISE**, allow the microphone when asked, and say **"Hey Jarvis"**.
-
-> It has to be a real browser window. Embedded preview panes block the
-> microphone, so JARVIS will look perfectly alive and simply never respond.
+Double-click **"JARVIS - ON / OFF"** on the desktop to arm or disarm him.
 
 ---
 
-## How it works
+## Running it
 
-JARVIS is two processes. The browser is the face and the voice; the bridge is
-the brain and the hands.
+- **Double-click `start-jarvis.bat`** — the loading screen opens instantly and
+  hands over to JARVIS once he's ready, or
+- **switch him ON** with the desktop switch and just say **"Hey Jarvis"**.
 
-```
-  ┌─ browser (the face) ───────────────┐        ┌─ bridge (the brain) ─────────────┐
-  │  "Hey Jarvis" wake word            │        │  Node · bridge/server.mjs        │
-  │  local VAD  →  speech to text      │   ws   │  Claude Agent SDK                │
-  │  reactor UI (Three.js + GLSL)      │◄─────► │   = Claude Code, headless        │
-  │  text to speech                    │  8787  │  spawns your MCP servers         │
-  │  heads-up display                  │        │  permission gate (decideTool)    │
-  └────────────────────────────────────┘        └──────────────────────────────────┘
-```
+The first time, Chrome asks for the microphone — allow it. WhatsApp shows a QR
+code the first time you use it — scan it with your phone (WhatsApp → Settings →
+Linked devices).
 
-Everything you see and hear happens in the browser. The bridge is a single Node
-process (`bridge/server.mjs`) that runs the **Claude Agent SDK**
-(`@anthropic-ai/claude-agent-sdk`) — this spawns the real `claude` CLI as a child
-process, so **the brain literally is Claude Code, headless.** They talk over a
-WebSocket (plus a few HTTP endpoints) on `ws://localhost:8787`.
-
-**Why a bridge at all?** A browser tab cannot spawn the local stdio MCP servers —
-`higgsfield`, `elevenlabs`, `android`, `playwright`, `exa`, `serper`, and the
-rest. The bridge can. And because it is the Agent SDK, it authenticates off your
-existing Claude Code login: no API key, billed to that same Claude account.
-
-**The model.** `claude-opus-5` at effort `medium` by default. Override with the
-`JARVIS_MODEL` and `JARVIS_EFFORT` environment variables. On startup the bridge
-prints its choice, e.g. `[jarvis] model claude-opus-5 · effort medium`.
-
-### The voice pipeline
-
-The loop is designed so that nothing silently dies and barge-in feels natural.
-
-- **Detection is local.** An energy-based voice-activity detector
-  (`src/lib/vad.ts`) decides when you are speaking. It is instant, cannot quietly
-  fail, and is what makes **barge-in** work — speak while JARVIS is talking and he
-  stops.
-- **Transcription has two tiers, chosen automatically at boot.** The browser asks
-  the bridge `/health` and picks the best available:
-  - **ElevenLabs key present** → ElevenLabs Scribe, via the bridge `/stt` endpoint.
-  - **Nothing configured** → the browser's own `SpeechRecognition` (Chrome/Edge),
-    guarded by a heartbeat so it recovers when Chrome throttles it.
-- **Speaking** uses the **ElevenLabs voice when a key is present**, and the
-  browser's `speechSynthesis` otherwise. If a cloud call fails it falls back to
-  the browser voice, and if the OS voice itself is broken it latches over to the
-  cloud voice.
-
-So it works with no keys and auto-upgrades when a key appears — there is no flag
-to set. Capability detection lives in `src/lib/capabilities.ts`, which probes the
-bridge's `GET /health` (returning `{ ok, tts, stt }`, both tracking the
-ElevenLabs key) once at boot and picks the engines.
-
----
-
-## What JARVIS can do
-
-Beyond answering, JARVIS reaches every MCP server in your Claude Code
-configuration, and can drive his own interface.
-
-### Your tools
-
-Every server in your `~/.claude.json` is handed to the SDK explicitly, or only the
-ones you name in `JARVIS_MCP_SERVERS`. Depending on what you have installed, that
-is roughly:
-
-- **Web & search** — `exa`, `serper`, `serpapi`
-- **Images & video** — `higgsfield`, `openrouter-image`, `palmier-pro`
-- **Voice** — `elevenlabs`
-- **Your phone** — `android`
-- **The browser** — `playwright`
-
-A few things you can say:
-
-- *"What's happening in AI this week?"*
-- *"Generate an image of the Mark VII suit."*
-- *"Take a screenshot of my phone."*
-- *"Open my GitHub notifications."*
-
-> **Note on account connectors.** Servers you added through your **claude.ai
-> account** (mail, drive, calendar and other account connectors) are not in `~/.claude.json`,
-> but the CLI fetches them on its own and they join the session from the second
-> turn. The bridge keeps them out by default; set `JARVIS_ACCOUNT_CONNECTORS=1`
-> to let them in, and `JARVIS_MCP_SERVERS` to choose which `~/.claude.json`
-> servers JARVIS gets.
-
-### JARVIS controls the interface
-
-He drives the UI through MCP tools the bridge exposes:
-
-- `ui_theme` — accent, background, per-phase colours
-- `ui_reactor` — colour, scale, intensity, spin, and style (`ring` | `sphere` | `wire`), visibility
-- `ui_orbit` — put images in orbit around the reactor
-- `ui_chrome` — show or hide rails, transcript, badges
-- `ui_effect` — `glitch` | `pulse` | `scan` | `shake` | `flash`
-- `ui_screen` — clear
-- `ui_reset` — back to defaults
-
-So *"make it red, hide the systems list, put that render in orbit"* is a spoken
-command.
-
-### The heads-up display
-
-JARVIS authors panels with a `display` tool against a fixed `.hud-*` design
-system. The browser sanitises the markup (DOMPurify, a class allowlist and a
-strict CSP) before rendering. Rich media works — images, `<video>`, and
-YouTube/Vimeo embeds. Remote images and video are fetched **server-side** through
-the bridge (`/img` and `/media`, both SSRF-guarded), so hotlink-blocked news
-thumbnails still appear and the page never beacons your IP to a host the model
-chose.
+> `start-jarvis.bat` runs the bridge with **actions enabled** (`--writes`), so he
+> can open apps, change files and send messages. Use `npm start` instead for a
+> read-only JARVIS.
 
 ---
 
@@ -199,181 +122,116 @@ chose.
 
 | Key / phrase | Does |
 |---|---|
-| **"Hey Jarvis"** | Wake him |
+| **"Hey Jarvis"** | Wake him — chime, then speak your request |
+| Say "Hey Jarvis" while he talks | Stop him and listen |
 | **Space** | Talk without the wake word |
-| Just speak | Interrupt him mid-sentence (barge-in) |
-| **V** | Cycle the browser voice |
+| **V** | Cycle the voice |
+| **D** | Diagnostics — what he heard and why |
+| **T** | Audio self-test |
 | **Escape** | Stand down |
-| **D** | Live diagnostics panel |
-| **T** | One-line audio self-test |
+| Desktop **JARVIS - ON / OFF** | Arm / disarm "Hey Jarvis"; OFF also closes him |
 
 ---
 
-## The boot sequence
+## How it works
 
-Power-up plays a four-beat Iron Man start-up (`src/ui/Boot.tsx`): an
-"INITIATING SYSTEM" status bar with a segmented progress bar and boot log; then
-concentric reticle rings resolving into "J.A.R.V.I.S"; then a suit schematic;
-then the triangular arc reactor lighting up — with a start-up sound under it
-(`public/audio/boot-music.mp3`).
+```
+ ┌ wake listener (Python) ┐   POST /wake      ┌─ bridge (Node, :8787) ───────────────┐
+ │ openWakeWord, offline  │ ────────────────► │ Claude Agent SDK = Claude Code       │
+ │ starts JARVIS if off   │                   │ tools: PC, WhatsApp, memory,         │
+ └────────────────────────┘                   │ reminders, weather, HUD, browser     │
+                                              │ scheduler · /status · tool policy    │
+ ┌─ JARVIS window (Chrome, :5188) ─────┐  ws  │                                      │
+ │ loading screen → HUD + reactor      │◄───► │                                      │
+ │ speech recognition + voice          │      └──────────────────────────────────────┘
+ └─────────────────────────────────────┘
+```
+
+- `start-jarvis.bat` opens `scripts/splash.html` (the loading screen) straight
+  from disk, starts the bridge and the interface, and the loading screen switches
+  to the interface (`http://localhost:5188`) the moment both answer.
+- The **bridge** (`bridge/server.mjs`) runs Claude Code headless and gives it
+  JARVIS's tools: `bridge/pc.mjs` and `bridge/desktop.mjs` (the PC),
+  `bridge/whatsapp.mjs` (WhatsApp Web via Playwright), `bridge/assistant.mjs`
+  (memory, reminders, weather) and `bridge/telemetry.mjs` (HUD readings).
+- The **wake listener** (`scripts/wake_listener.py`) hears "Hey Jarvis" offline.
+  With JARVIS open it signals the window through the bridge; with JARVIS off it
+  runs `start-jarvis.bat wake`.
+- **Your data stays on your PC**, in `%USERPROFILE%\.jarvis`: `memory.md`,
+  `reminders.json`, the WhatsApp login, and logs (`jarvis.log`,
+  `wake-listener.log`).
 
 ---
 
 ## Configuration
 
-Everything is optional in bridge mode. Frontend settings live in `.env.local`
-(copy `.env.example`); bridge settings are environment variables.
+Frontend settings go in `.env.local`; bridge settings are environment variables.
+`.env.example` documents every one. The most useful:
 
-### Bridge
-
-| Variable | Default | Effect |
-|---|---|---|
-| `JARVIS_BRIDGE_PORT` | `8787` | Port for the WebSocket + HTTP endpoints |
-| `JARVIS_BRIDGE_HOST` | `127.0.0.1` | Interface to listen on. Any other address puts the agent on your network |
-| `JARVIS_ALLOWED_HOSTS` | none | Extra hostnames the bridge answers to; a request for any other name gets a 403 |
-| `JARVIS_MODEL` | `claude-opus-5` | Model to run |
-| `JARVIS_EFFORT` | `medium` | Reasoning effort |
-| `JARVIS_ALLOW_WRITES` | off | `1` allows effectful tools (see below) |
-| `JARVIS_MCP_SERVERS` | all configured | Comma-separated `~/.claude.json` servers to pass on; empty passes none |
-| `JARVIS_ACCOUNT_CONNECTORS` | off | `1` lets your claude.ai account's connectors join the session |
-| `JARVIS_DISABLE` | none | Comma-separated capabilities to leave out: `browser`, `camera`, `interface` |
-| `JARVIS_ALLOWED_ORIGINS` | local dev | Extra WebSocket origins to accept |
-| `JARVIS_ALLOW_NO_ORIGIN` | off | Accept connections with no `Origin` header |
-| `JARVIS_WORKSPACE` | `~/.jarvis/workspace` | The agent's working directory; file tools are confined to it and the temp directory |
-| `JARVIS_FILE_ROOTS` | none | Extra folders the file tools and the `/file` endpoint may use |
-| `JARVIS_KEEP_TRANSCRIPTS` | off | `1` keeps the SDK's session transcripts in `~/.claude/projects` |
-| `JARVIS_CLAUDE_EXECUTABLE` | bundled CLI | Run the agent through this executable instead, e.g. a sandbox wrapper that execs the real CLI |
-| `JARVIS_CHROME_PIPE` | none | WSL only: the Windows pipe name the browser relay connects to |
-| `JARVIS_DEBUG` | off | `1` logs every agent message to the bridge terminal, answer text and tool calls included |
-| `JARVIS_VOICE_ID` | none | ElevenLabs voice id |
-| `ELEVENLABS_API_KEY` | none | Optional; enables the ElevenLabs voice + Scribe |
-
-### Frontend (`.env.local`)
-
-| Variable | Effect |
+| Setting | Effect |
 |---|---|
-| `VITE_BACKEND` | `bridge` (default) or `direct` |
-| `VITE_BRIDGE_URL` | Where to reach the bridge |
-| `VITE_TTS_ENGINE` | `system` or `kokoro` |
-| `VITE_KOKORO_VOICE` | Voice for the Kokoro engine |
-| `VITE_USE_ELEVENLABS` | Force the ElevenLabs voice on |
-| `VITE_ANTHROPIC_API_KEY` | Direct mode only |
+| `VITE_SYSTEM_VOICE` | Voice by name, e.g. `Google UK English Male`, `David` |
+| `VITE_VOICE_RATE` | Speaking pace (1.0 natural, 1.2 brisk) |
+| `VITE_TTS_ENGINE` | `system` (instant) or `kokoro` (neural, British, GPU) |
+| `VITE_SPEECH_LANG` | Recognition accent: `en-IN`, `en-GB`, `en-US` … |
+| `VITE_END_PAUSE_MS` | Quiet that ends a command — raise it if you get cut off |
+| `VITE_MUSIC_AMBIENT` / `VITE_MUSIC` | `off` to drop the background music / all music |
+| `VITE_AUTOSTART` | `off` brings back the INITIALISE button |
+| `JARVIS_PERSONA` | `formal` for the original terse film-butler persona |
+| `JARVIS_MODEL` / `JARVIS_EFFORT` | Model and reasoning effort |
+| `JARVIS_DISABLE` | Leave out `pc`, `whatsapp`, `browser`, `camera`, `interface` |
+| `JARVIS_ALLOW_WRITES` | `1` enables actions (the `.bat` passes `--writes`) |
 
-### Adding an ElevenLabs key
-
-You do not have to touch a flag. Either:
-
-- Set `ELEVENLABS_API_KEY` on the bridge before starting it, **or**
-- Add the key to your `elevenlabs` MCP server's env in `~/.claude.json` — the
-  bridge reads it from there too.
-
-Either way, `/health` starts reporting the capability, the browser picks it up on
-the next boot, and both the voice and transcription upgrade automatically.
+The wake word's sensitivity is `--threshold` in `scripts/wake_listener.py`
+(default 0.15): raise it if JARVIS starts by mistake, lower it if he misses you.
 
 ---
 
-## Enabling actions
+## Safety
 
-The tool gate starts **read-only**. Search, generation and lookups run freely;
-anything effectful — send, tap, delete, install, pay — is denied. Voice is a poor
-interface for a confirmation dialog, so the decision is made ahead of time, in
-`decideTool()` in `bridge/policy.mjs`. The bridge sets
-`settingSources: []`, which makes its own gate the only authority — filesystem
-settings and any global `bypassPermissions` cannot override it.
+JARVIS can act on your PC, so the bridge keeps a tool gate (`bridge/policy.mjs`):
 
-A `PreToolUse` hook applies that policy to every call, including the reads the
-Claude Code CLI would otherwise approve by itself. In read-only mode the agent
-has no shell, and its file tools reach only its workspace (`~/.jarvis/workspace`),
-the temp directory and any folders in `JARVIS_FILE_ROOTS`. Paths that hold
-credentials, such as `~/.ssh`, `~/.claude` and `.env` files, stay refused even
-inside those folders.
-
-To allow effectful tools (phone, browser driving, sending), run the bridge this
-way instead:
-
-```bash
-npm run bridge:writes
-```
-
-The script passes `--writes` to the bridge, so it works in Windows `cmd` and
-PowerShell too. With `npm start`, use `npm start -- --writes`. Writes add `Bash`,
-`Write`, `Edit` and `NotebookEdit` to the agent's tools. The file tools stay
-inside the same folders; the shell can reach anything your user account can.
-
-> Read `decideTool()` before you do. *"Hey Jarvis, clean up my downloads folder"*
-> means something rather different with writes enabled.
+- **Read-only unless writes are on.** Without `--writes`, nothing that changes
+  files, runs commands or sends messages is even offered to the model.
+- **System folders and credentials are refused** by the file tools (Windows,
+  Program Files, AppData, `.ssh`, `.env` files …); deletions go to the Recycle
+  Bin; copies and moves never overwrite.
+- **WhatsApp never guesses** — an ambiguous contact name sends nothing and asks.
+- **Shut-down and restart** require a spoken yes, and wait 60 seconds.
+- The bridge listens on `127.0.0.1` only, checks Origin and Host on every
+  request (blocking other sites and DNS rebinding), and its media/page proxies
+  refuse private network addresses.
+- `run_powershell` can do anything your user account can. That is what makes
+  "do anything on my PC" possible — keep it in mind, and use the switch to turn
+  JARVIS off when you don't want him listening.
 
 ---
 
 ## Troubleshooting
 
-**I can't hear him, or he can't hear me.** Press **D** for the diagnostics panel
-— it states plainly whether he is hearing you and whether he is producing sound.
-Press **T** for a one-line audio self-test.
-
-**No voice at all.** You must be in **Chrome or Edge**, in a **real browser
-window** (not an embedded preview), and you must have **allowed the microphone**.
-
-**Bridge not reachable.** Check that `npm run bridge` is still running in its
-terminal, and that nothing else is holding port `8787`. If the port is taken,
-the bridge says so in one line at startup and exits. It listens on `127.0.0.1`
-only. Reaching it from another machine takes `JARVIS_BRIDGE_HOST` and
-`JARVIS_ALLOWED_HOSTS`, and your own authentication in front of it first.
-
-**Browser control on Windows.** The bridge finds the Claude extension's named
-pipe, `\\.\pipe\claude-mcp-browser-bridge-<user>`, by itself. If the boot log
-says the extension is not running, open Chrome with the extension signed in.
-Each browser request looks for the pipe again, so the bridge does not need a
-restart.
-
-**Running the bridge in WSL, with Chrome on Windows.** Browser control works:
-the Windows native host exposes a named pipe rather than a Unix socket, and the
-bridge reaches it through a short PowerShell relay (WSL interop must be on,
-which it is by default). Open the app at `http://127.0.0.1:5173` if
-`localhost` is slow to load — Windows tries IPv6 loopback first, and WSL does
-not forward it.
+- **Logs:** `%USERPROFILE%\.jarvis\jarvis.log` records what he heard, what he
+  said, every tool result and every voice event. Press **D** for live diagnostics.
+- **He cuts me off mid-sentence:** raise `VITE_END_PAUSE_MS` (e.g. 2000). Talking
+  over him while he speaks confuses the browser's recogniser — say "Hey Jarvis"
+  to stop him first.
+- **"Hey Jarvis" does nothing:** check the switch is ON and see
+  `wake-listener.log`.
+- **Port 5188 in use:** JARVIS uses its own port so other Vite projects on 5173
+  don't clash; free 5188 or set `PORT` (keep it within 5173–5199).
+- **No sound:** press **T**. `Google UK English Male` needs internet; set
+  `VITE_SYSTEM_VOICE=David` for an offline voice.
 
 ---
 
 ## Tests
 
-`npm test` runs the bridge's tests with Node's built-in runner. They cover the
-network binding, the tool policy, the MCP server allowlist and the WSL browser
-relay, which runs only under WSL. The network and allowlist tests start the
-bridge on a random loopback port, and none of the tests opens an agent session.
-
----
-
-## Security
-
-The bridge's defences live in `bridge/server.mjs` and `bridge/policy.mjs`:
-
-- It listens on `127.0.0.1` and answers only requests addressed to `localhost`,
-  `127.0.0.1` or `[::1]`, which blocks DNS rebinding.
-- The WebSocket accepts only local dev origins (add more with
-  `JARVIS_ALLOWED_ORIGINS`).
-- `/file`, `/img` and `/media` validate the scheme, confine to allowed roots,
-  resolve the real path, and refuse private and loopback addresses (SSRF guard).
-- The tool gate (`decideTool`) is default-deny for effectful MCP tools.
-- A `PreToolUse` hook enforces the tool policy on every call. File tools stay
-  inside the workspace, the temp directory and `JARVIS_FILE_ROOTS`, and
-  `WebFetch` cannot reach loopback, LAN or cloud metadata addresses.
-- claude.ai account connectors stay out of the session unless
-  `JARVIS_ACCOUNT_CONNECTORS=1`, and `JARVIS_MCP_SERVERS` narrows which
-  `~/.claude.json` servers the agent gets.
-- Session transcripts are written to `~/.claude/projects` only when
-  `JARVIS_KEEP_TRANSCRIPTS=1`.
-- `JARVIS_DISABLE` removes browser control, the camera or the interface tools
-  entirely, and `JARVIS_CLAUDE_EXECUTABLE` can run the agent inside a sandbox
-  wrapper.
-- A strict CSP in `index.html`; model-authored panel HTML is sanitised.
+`npm test` runs the bridge's tests (network binding, tool policy, MCP allowlist).
 
 ---
 
 ## Credits & licence
 
-MIT.
-
-The boot sound and any tracks in `public/audio/` ship with the project for the
-demo. If you go on to monetise something built on this, clearing the rights to
-that audio is your responsibility.
+MIT. Built on an open-source JARVIS voice-assistant project (bridge, reactor
+interface and voice pipeline), extended into a Windows personal assistant.
+Music by Kevin MacLeod (incompetech.com), CC BY 4.0 — see
+`public/audio/CREDITS.md`. Wake word by [openWakeWord](https://github.com/dscripka/openWakeWord).
