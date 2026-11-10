@@ -1,0 +1,190 @@
+<!doctype html>
+<!--
+  JARVIS loading screen.
+
+  Opened straight from disk (file://) the instant JARVIS is asked to start, so
+  something is on screen before either server exists. It polls the bridge and
+  the interface, shows their real state, and hands over to the interface the
+  moment both answer. Self-contained: no network, no build step.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>J.A.R.V.I.S.</title>
+    <style>
+      :root {
+        --accent: #19d8d2;
+        --bg: #01060c;
+        --dim: color-mix(in srgb, var(--accent) 35%, transparent);
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: radial-gradient(ellipse at center, #031822 0%, var(--bg) 62%);
+        color: var(--accent);
+        font-family: 'Chakra Petch', 'Segoe UI', system-ui, sans-serif;
+        overflow: hidden;
+        user-select: none;
+      }
+      .stage {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+      }
+      .reactor {
+        position: relative;
+        width: min(46vmin, 420px);
+        aspect-ratio: 1;
+      }
+      .ring {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        border: 1px solid var(--dim);
+      }
+      .r1 { border: 2px solid var(--accent); box-shadow: 0 0 40px color-mix(in srgb, var(--accent) 55%, transparent), inset 0 0 30px color-mix(in srgb, var(--accent) 35%, transparent); opacity: .9; }
+      .r2 { inset: 9%; border-style: dashed; animation: spin 14s linear infinite; }
+      .r3 { inset: 18%; border-width: 3px; border-color: var(--accent) transparent var(--accent) transparent; animation: spin 3.2s linear infinite reverse; filter: drop-shadow(0 0 8px var(--accent)); }
+      .r4 { inset: 29%; border-style: dotted; animation: spin 22s linear infinite; }
+      .core {
+        position: absolute;
+        inset: 41%;
+        border-radius: 50%;
+        background: radial-gradient(circle, #e6ffff 0%, var(--accent) 38%, transparent 72%);
+        animation: pulse 1.6s ease-in-out infinite;
+      }
+      .word {
+        position: absolute;
+        left: 50%;
+        top: calc(50% + min(23vmin, 210px) + 34px);
+        transform: translateX(-50%);
+        text-align: center;
+        white-space: nowrap;
+      }
+      .mark {
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: .5em;
+        text-shadow: 0 0 22px color-mix(in srgb, var(--accent) 70%, transparent);
+      }
+      .sub { margin-top: 6px; font-size: 9px; letter-spacing: .3em; opacity: .45; text-transform: uppercase; }
+      .bar {
+        margin: 22px auto 0;
+        width: 320px;
+        height: 3px;
+        background: color-mix(in srgb, var(--accent) 14%, transparent);
+      }
+      .bar > div {
+        height: 100%;
+        width: 0;
+        background: var(--accent);
+        box-shadow: 0 0 10px var(--accent);
+        transition: width .6s cubic-bezier(.2,.8,.2,1);
+      }
+      .checks {
+        margin-top: 18px;
+        display: grid;
+        gap: 7px;
+        font: 11px/1.3 'JetBrains Mono', Consolas, monospace;
+        letter-spacing: .14em;
+        text-transform: uppercase;
+        text-align: left;
+        width: 320px;
+        margin-left: auto;
+        margin-right: auto;
+      }
+      .check { display: flex; justify-content: space-between; opacity: .55; transition: opacity .3s; }
+      .check.on { opacity: 1; }
+      .check .st::after { content: 'STANDBY'; }
+      .check.wait .st::after { content: 'STARTING'; animation: blink 1s steps(2) infinite; }
+      .check.on .st { color: #e9fcff; text-shadow: 0 0 10px var(--accent); }
+      .check.on .st::after { content: 'ONLINE'; animation: none; }
+      .note { margin-top: 16px; font-size: 10px; letter-spacing: .12em; opacity: .55; min-height: 1em; }
+      .corner { position: fixed; width: 46px; height: 46px; border: 1px solid var(--dim); }
+      .tl { top: 26px; left: 26px; border-right: 0; border-bottom: 0; }
+      .tr { top: 26px; right: 26px; border-left: 0; border-bottom: 0; }
+      .bl { bottom: 26px; left: 26px; border-right: 0; border-top: 0; }
+      .br { bottom: 26px; right: 26px; border-left: 0; border-top: 0; }
+      .fade { animation: out .5s ease forwards; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes pulse { 50% { transform: scale(.82); opacity: .75; } }
+      @keyframes blink { 50% { opacity: .2; } }
+      @keyframes out { to { opacity: 0; filter: blur(6px); } }
+      @media (prefers-reduced-motion: reduce) { .r2, .r3, .r4, .core { animation: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="corner tl"></div><div class="corner tr"></div>
+    <div class="corner bl"></div><div class="corner br"></div>
+    <div class="stage" id="stage">
+      <div class="reactor">
+        <div class="ring r1"></div><div class="ring r2"></div>
+        <div class="ring r3"></div><div class="ring r4"></div>
+        <div class="core"></div>
+      </div>
+      <div class="word">
+        <div class="mark">J.A.R.V.I.S.</div>
+        <div class="sub">Initialising</div>
+        <div class="bar"><div id="bar"></div></div>
+        <div class="checks">
+          <div class="check on" id="c-core"><span>Core</span><span class="st"></span></div>
+          <div class="check wait" id="c-brain"><span>Neural bridge</span><span class="st"></span></div>
+          <div class="check wait" id="c-face"><span>Interface</span><span class="st"></span></div>
+        </div>
+        <div class="note" id="note"></div>
+      </div>
+    </div>
+    <script>
+      const params = new URLSearchParams(location.search)
+      // JARVIS's own port (vite.config.ts) — not 5173, which other projects use.
+      const FACE = 'http://localhost:5188/'
+      const target = FACE + '?from=splash' + (params.get('wake') === '1' ? '&wake=1' : '')
+      const bar = document.getElementById('bar')
+      const note = document.getElementById('note')
+      const started = Date.now()
+
+      // Reachability only: no-cors resolves for any answer at all and rejects
+      // when nothing is listening yet, which is exactly the question.
+      const up = (url) =>
+        fetch(url, { mode: 'no-cors', cache: 'no-store' }).then(() => true, () => false)
+
+      let brain = false
+      let face = false
+      let leaving = false
+
+      function paint() {
+        document.getElementById('c-brain').className = 'check ' + (brain ? 'on' : 'wait')
+        document.getElementById('c-face').className = 'check ' + (face ? 'on' : 'wait')
+        const done = 1 + (brain ? 1 : 0) + (face ? 1 : 0)
+        // Creep forward while waiting so the bar never looks frozen.
+        const creep = Math.min(0.12, (Date.now() - started) / 60000)
+        bar.style.width = Math.min(100, (done / 3 + (done < 3 ? creep : 0)) * 100) + '%'
+      }
+
+      async function tick() {
+        if (leaving) return
+        ;[brain, face] = await Promise.all([up('http://127.0.0.1:8787/health'), up(FACE)])
+        paint()
+        if (brain && face) {
+          leaving = true
+          note.textContent = 'All systems online'
+          setTimeout(() => {
+            document.getElementById('stage').classList.add('fade')
+            setTimeout(() => location.replace(target), 450)
+          }, 500)
+          return
+        }
+        const secs = (Date.now() - started) / 1000
+        if (secs > 90) {
+          note.textContent = 'Taking longer than usual — check the JARVIS brain window'
+        }
+        setTimeout(tick, 600)
+      }
+
+      paint()
+      tick()
+    </script>
+  </body>
+</html>
