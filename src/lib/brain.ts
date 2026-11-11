@@ -79,6 +79,21 @@ export function watchRemoteWake(fn: () => void): void {
   if (usingBridge) bridge.watchRemoteWake(fn)
 }
 
+/** Requests typed into the onscreen popup. Bridge only. */
+export function watchPopupAsk(fn: (text: string) => void): void {
+  if (usingBridge) bridge.watchPopupAsk(fn)
+}
+
+/** Circle to Search results (path of the cropped image). Bridge only. */
+export function watchCircle(fn: (path: string) => void): void {
+  if (usingBridge) bridge.watchCircle(fn)
+}
+
+/** The window's phase, shown on the onscreen popup. Bridge only. */
+export function reportPhase(phase: string): void {
+  if (usingBridge) bridge.reportPhase(phase)
+}
+
 /**
  * The one thing the bridge asks US for.
  *

@@ -26,6 +26,9 @@ import {
   watchUi,
   watchAnnounce,
   watchRemoteWake,
+  watchPopupAsk,
+  watchCircle,
+  reportPhase,
   watchConnection,
   connectedLabels,
   usingBridge,
@@ -33,7 +36,7 @@ import {
 } from './lib/brain'
 import { startAnalyser, micLevel } from './lib/audio'
 import { probeCapabilities } from './lib/capabilities'
-import { env } from './config'
+import { env, BRIDGE_HTTP_URL } from './config'
 
 // Hot updates are unsafe here: the voice loop, the recogniser and the bridge
 // socket are started once per page, and a hot-swapped component starts a second
@@ -67,6 +70,18 @@ const AWAIT_SPEECH_MS = 14000
 const STANDBY =
   /\b(go(ing)?\s+(in)?to\s+(stand\s*-?\s*by|standby|sleep)|stand\s*-?\s*by(\s+mode)?|standby(\s+mode)?|stand\s+down|stop\s+listening|go\s+to\s+sleep|sleep\s+mode|that'?s\s+all|good\s*bye|bye\s+bye|dismissed)\b/i
 const STANDBY_MAX_WORDS = 7
+
+/** "Turn on / off onscreen jarvis" — the Copilot-style popup (scripts/popup.ps1). */
+const POPUP_ON =
+  /\b(turn\s+on|switch\s+on|open|show|start|enable|launch)\s+(the\s+)?(on\s*-?\s*screen|onscreen|pop\s*-?\s*up|popup|mini)(\s+mode)?(\s+jarvis)?\b/i
+const POPUP_OFF =
+  /\b(turn\s+off|switch\s+off|close|hide|stop|disable)\s+(the\s+)?(on\s*-?\s*screen|onscreen|pop\s*-?\s*up|popup|mini)(\s+mode)?(\s+jarvis)?\b/i
+/** "Circle to search" — the screen overlay (scripts/circle.ps1). */
+const CIRCLE = /\bcircle\s+(to|and|n)?\s*search\b|\bcircle\s+something\b/i
+
+/** Ask the bridge to do something on the desktop (popup, circle overlay). */
+const desktop = (path: string) =>
+  fetch(`${BRIDGE_HTTP_URL}${path}`, { method: 'POST' }).catch(() => undefined)
 const STANDBY_LINES = [
   'Standing by, sir.',
   "Very good, sir. I'll be here.",
@@ -442,6 +457,27 @@ export default function App() {
       return
     }
 
+    // Desktop commands, also handled here so they work instantly and reliably.
+    const short = said.split(/\s+/).length <= 8
+    if (short && (POPUP_ON.test(said) || POPUP_OFF.test(said) || CIRCLE.test(said))) {
+      const on = POPUP_ON.test(said)
+      const circle = CIRCLE.test(said)
+      console.warn(`[voice] desktop command: "${said}"`)
+      void desktop(circle ? '/circle' : on ? '/popup/show' : '/popup/hide')
+      const s = createSpeaker()
+      speaker.current = s
+      s.say(
+        circle
+          ? 'Circle whatever you like, sir.'
+          : on
+            ? "Onscreen mode, sir. I'll be in the corner."
+            : 'Closing the onscreen panel, sir.',
+      )
+      void s.end()
+      listen(FOLLOW_UP_MS)
+      return
+    }
+
     void respond(said)
   }
 
@@ -562,6 +598,35 @@ export default function App() {
     // speaker held in the same slot as any other line, so saying "stop" or
     // starting to talk cuts it off like anything else he says.
     watchRemoteWake(() => onRemoteWake())
+
+    // The onscreen popup: what was typed there is a request like any other,
+    // and the window's phase is mirrored to it.
+    const fromDesk = (text: string) => {
+      const phase = store.getState().phase
+      if (phase === 'offline' || phase === 'boot') return
+      if (phase === 'thinking' || phase === 'tooling' || phase === 'speaking') {
+        silence()
+        interrupt()
+      }
+      void respond(text)
+    }
+    watchPopupAsk(fromDesk)
+
+    // Circle to Search: the user circled part of the screen; the crop is a
+    // PNG in the temp folder, which his file tools can read and see.
+    watchCircle((path) =>
+      fromDesk(
+        `I've circled something on my screen. The cropped image is at ${path}. ` +
+          'Look at it (read the image file), tell me what it is, and if it helps, ' +
+          'search the web for it and give me the key facts — like Circle to Search. ' +
+          "Don't read the file path aloud.",
+      ),
+    )
+
+    reportPhase(store.getState().phase)
+    useStore.subscribe((st, prev) => {
+      if (st.phase !== prev.phase) reportPhase(st.phase)
+    })
 
     watchAnnounce((text) => {
       const s = createSpeaker()

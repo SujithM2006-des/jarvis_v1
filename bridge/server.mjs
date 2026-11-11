@@ -25,6 +25,87 @@ import { pcServer } from './pc.mjs'
 import { sendScheduled, showWhatsApp, whatsappServer } from './whatsapp.mjs'
 import { openApp } from './pc.mjs'
 import { status as telemetry } from './telemetry.mjs'
+import { spawn as spawnProcess } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+const SCRIPTS = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'scripts')
+
+/**
+ * What the onscreen popup (scripts/popup.ps1) shows: the window's phase, the
+ * last thing heard, and the answer as it streams. Fed from the conversation
+ * below; read by the popup at GET /popup/state.
+ */
+const popupState = { phase: 'offline', heard: '', said: '', tool: '' }
+
+/** Send to every connected JARVIS window. */
+const broadcast = (msg) => {
+  for (const ws of CLIENTS) if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
+  return CLIENTS.size
+}
+
+let popupProc = null
+const PS_ARGS = ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File']
+
+/** Open the onscreen popup, unless it is already open. */
+function showPopup() {
+  if (popupProc && popupProc.exitCode === null) return false
+  popupProc = spawnProcess('powershell.exe', [...PS_ARGS, join(SCRIPTS, 'popup.ps1')], {
+    stdio: 'ignore',
+    windowsHide: true,
+  })
+  popupProc.on('exit', () => {
+    popupProc = null
+  })
+  return true
+}
+
+function hidePopup() {
+  if (!popupProc) return false
+  popupProc.kill()
+  popupProc = null
+  return true
+}
+
+let circling = false
+
+/**
+ * Circle to Search: run the overlay; when the user has circled something,
+ * hand the cropped image to the JARVIS window to identify and look up.
+ */
+function startCircle() {
+  if (circling) return false
+  circling = true
+  const proc = spawnProcess('powershell.exe', [...PS_ARGS, join(SCRIPTS, 'circle.ps1')], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+    windowsHide: true,
+  })
+  let out = ''
+  proc.stdout.on('data', (d) => {
+    out += d
+  })
+  proc.on('exit', () => {
+    circling = false
+    const path = out.trim()
+    if (!path || !existsSync(path)) return console.log('[jarvis] circle to search: cancelled')
+    console.log(`[jarvis] circle to search: ${path}`)
+    broadcast({ type: 'circle', path })
+  })
+  return true
+}
+
+async function readJson(req) {
+  let body = ''
+  for await (const chunk of req) {
+    body += chunk
+    if (body.length > 16 * 1024) break
+  }
+  try {
+    return JSON.parse(body || '{}')
+  } catch {
+    return {}
+  }
+}
 
 /**
  * What the HUD dock may launch. A fixed list on purpose: this route skips the
@@ -931,6 +1012,36 @@ const handleRequest = async (req, res) => {
     return res.end(JSON.stringify({ clients: sent }))
   }
 
+  // The onscreen popup and Circle to Search. Same-origin rules as everything
+  // else (checked above); the popup itself is a local process and sends none.
+  if (req.method === 'GET' && req.url === '/popup/state') {
+    // charset stated explicitly: Windows PowerShell (the popup) otherwise
+    // decodes as Latin-1 and an em dash in an answer arrives as "â€”".
+    res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    return res.end(JSON.stringify({ ...popupState, connected: CLIENTS.size > 0 }))
+  }
+  if (req.method === 'POST' && req.url === '/popup/show') {
+    const opened = showPopup()
+    res.writeHead(200, { ...cors, 'content-type': 'application/json' })
+    return res.end(JSON.stringify({ opened }))
+  }
+  if (req.method === 'POST' && req.url === '/popup/hide') {
+    const closed = hidePopup()
+    res.writeHead(200, { ...cors, 'content-type': 'application/json' })
+    return res.end(JSON.stringify({ closed }))
+  }
+  if (req.method === 'POST' && req.url === '/popup/ask') {
+    const text = String((await readJson(req)).text ?? '').trim().slice(0, 2000)
+    const sent = text ? broadcast({ type: 'popup-ask', text }) : 0
+    res.writeHead(sent ? 200 : 409, { ...cors, 'content-type': 'application/json' })
+    return res.end(JSON.stringify({ sent }))
+  }
+  if (req.method === 'POST' && req.url === '/circle') {
+    const started = startCircle()
+    res.writeHead(200, { ...cors, 'content-type': 'application/json' })
+    return res.end(JSON.stringify({ started }))
+  }
+
   // Live readings for the HUD gauges. Cheap: the slow parts are cached.
   if (req.method === 'GET' && req.url === '/status') {
     res.writeHead(200, { ...cors, 'content-type': 'application/json', 'cache-control': 'no-store' })
@@ -1412,7 +1523,14 @@ wss.on('connection', (socket) => {
    * listener over there has already heard.
    */
   let answering = null
-  const sendTurn = (msg) => send({ ...msg, ask: answering })
+  const sendTurn = (msg) => {
+    // The popup mirrors the conversation: the answer as it streams, the tool
+    // at work, and the final text.
+    if (msg.type === 'text' && msg.delta) popupState.said += msg.delta
+    else if (msg.type === 'tool') popupState.tool = String(msg.name ?? '').replace(/^mcp__[^_]+(_[^_]+)*__/, '').replace(/_/g, ' ')
+    else if (msg.type === 'done' && msg.text) popupState.said = msg.text
+    send({ ...msg, ask: answering })
+  }
 
   /**
    * Asking the browser for something and waiting for the answer.
@@ -1814,6 +1932,9 @@ wss.on('connection', (socket) => {
       const text = msg.text
       const id = typeof msg.id === 'string' ? msg.id : null
       console.log(`[jarvis] heard: ${text.replace(/\s+/g, ' ').slice(0, 300)}`)
+      popupState.heard = text.replace(/^\[.*?\]\s*/, '').slice(0, 300)
+      popupState.said = ''
+      popupState.tool = ''
       void settling.then(() => {
         answering = id
         if (deliver) {
@@ -1824,6 +1945,11 @@ wss.on('connection', (socket) => {
           inbox.push(text)
         }
       })
+    }
+
+    // The window's phase (listening, thinking, speaking …), for the popup.
+    if (msg.type === 'phase' && typeof msg.phase === 'string') {
+      popupState.phase = msg.phase.slice(0, 20)
     }
 
     if (msg.type === 'reply' && typeof msg.id === 'string') {

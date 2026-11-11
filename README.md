@@ -39,6 +39,15 @@ your existing Claude Code login. No API key is required.
 - **Weather**, and a **morning briefing** ("good morning, Jarvis")
 - **Gmail and Google Calendar** through your Claude account's connectors
 
+**Circle to Search**
+- Say "circle to search" (or click ◯ on the onscreen panel), draw around
+  anything on screen, and JARVIS tells you what it is and looks it up
+
+**Onscreen JARVIS**
+- "Turn on onscreen jarvis" opens a compact, always-on-top panel in the corner,
+  like Copilot: live status, what he heard, his answer, a box to type in, and
+  Circle to Search. Its ✕ closes only the panel; "turn off onscreen jarvis" too
+
 **The experience**
 - **"Hey Jarvis" works like "Hey Google"** — an offline wake-word detector
   answers in a fraction of a second, chimes, and listens. It cuts through him
@@ -134,6 +143,8 @@ Linked devices).
 |---|---|
 | **"Hey Jarvis"** | Wake him — chime, then speak your request |
 | Say "Hey Jarvis" while he talks | Stop him and listen |
+| **"Turn on onscreen jarvis"** / **"turn off onscreen jarvis"** | Open / close the corner panel (its ✕ closes it too) |
+| **"Circle to search"** | Draw around anything on screen; Esc or right-click cancels |
 | **"Go to standby"** | He goes quiet until the next "Hey Jarvis" (also "stand down", "stop listening", "go to sleep", "that's all", "goodbye") |
 | **Space** | Talk without the wake word |
 | **V** | Cycle the voice |
@@ -168,6 +179,11 @@ Linked devices).
 - The **wake listener** (`scripts/wake_listener.py`) hears "Hey Jarvis" offline.
   With JARVIS open it signals the window through the bridge; with JARVIS off it
   runs `start-jarvis.bat wake`.
+- **The onscreen panel** (`scripts/popup.ps1`, WPF) and **Circle to Search**
+  (`scripts/circle.ps1`, a full-screen overlay) are small native windows the
+  bridge starts (`POST /popup/show`, `POST /circle`). The panel polls
+  `GET /popup/state` and sends typed requests to `POST /popup/ask`; a circled
+  region is saved as a PNG in the temp folder and handed to JARVIS to look at.
 - **Your data stays on your PC**, in `%USERPROFILE%\.jarvis`: `memory.md`,
   `reminders.json`, the WhatsApp login, and logs (`jarvis.log`,
   `wake-listener.log`).

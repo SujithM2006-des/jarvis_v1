@@ -1,4 +1,4 @@
-# JARVIS switch.
+﻿# JARVIS switch.
 #
 # Double-click the "JARVIS - ON / OFF" shortcut on the desktop to flip it.
 # Nothing related to JARVIS starts with Windows; this switch is the only way

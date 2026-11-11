@@ -112,6 +112,23 @@ export function watchRemoteWake(fn: () => void) {
   onRemoteWake = fn
 }
 
+/** A request typed into the onscreen popup. */
+let onPopupAsk: ((text: string) => void) | null = null
+export function watchPopupAsk(fn: (text: string) => void) {
+  onPopupAsk = fn
+}
+
+/** Circle to Search: the path of the cropped image the user circled. */
+let onCircle: ((path: string) => void) | null = null
+export function watchCircle(fn: (path: string) => void) {
+  onCircle = fn
+}
+
+/** Tell the bridge the window's phase, which the onscreen popup displays. */
+export function reportPhase(phase: string) {
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'phase', phase }))
+}
+
 /**
  * Connection state, for the UI.
  *
@@ -221,6 +238,12 @@ function dispatch(ws: WebSocket) {
       onUi?.(msg.op, (msg.args ?? {}) as Record<string, unknown>)
     } else if ((msg.type as string) === 'wake') {
       onRemoteWake?.()
+    } else if ((msg.type as string) === 'popup-ask') {
+      const text = String((msg as unknown as { text?: unknown }).text ?? '').trim()
+      if (text) onPopupAsk?.(text)
+    } else if ((msg.type as string) === 'circle') {
+      const path = String((msg as unknown as { path?: unknown }).path ?? '').trim()
+      if (path) onCircle?.(path)
     } else if (msg.type === 'announce') {
       const text = String((msg as unknown as { text?: unknown }).text ?? '').trim()
       if (text) onAnnounce?.(text)
