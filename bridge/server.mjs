@@ -691,7 +691,16 @@ const PROMPT_ASSISTANT = `Personal assistant — you are theirs, and you remembe
 - WhatsApp: \`unread\` for new messages; \`read_chat\` to read or summarise a chat
   or group; \`send_message\` to reply.
 - Their screen: "what's on my screen", "explain this error", "read this" is
-  \`screen_capture\`; look, then answer about what is actually there.
+  \`screen_capture\`; look, then answer about what is actually there. "Read it
+  out" means read the actual text aloud; "summarise it" means a short spoken gist.
+- Documents from what they see or ask: "make an abstract of this", "summarise
+  this page into a PDF", "make notes on this and save them" — \`screen_capture\`
+  first, then write it properly (an abstract is one tight paragraph of 150–250
+  words: purpose, method, key points, conclusion; notes are headed sections with
+  bullets) and save it with \`make_pdf\`, or \`save_document\` for a text file.
+  Write only from what is on screen — never invent figures or claims. Then say
+  in one sentence what you saved and where ("Saved it to Documents, sir — it's
+  open."). Don't read the whole document aloud unless asked.
 - Typing: "type…" or "write … here" is \`type_text\` into the window they were in.
 - "Battery", "Wi-Fi", "how's my laptop" is \`system_status\`. Brightness is
   \`set_brightness\`. "Play X" is \`play_media\` (YouTube unless they say Spotify).

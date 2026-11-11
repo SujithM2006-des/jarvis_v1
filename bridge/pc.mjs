@@ -5,6 +5,7 @@ import { readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, resolve as resolvePath, sep } from 'node:path'
 import { DESKTOP_WRITE_TOOLS, desktopTools } from './desktop.mjs'
+import { DOCUMENT_WRITE_TOOLS, documentTools } from './documents.mjs'
 
 /**
  * JARVIS's hands on the Windows desktop.
@@ -394,7 +395,7 @@ const pathArg = (what) => z.string().describe(
 )
 
 /** Tool names that change files or run arbitrary commands. */
-export const PC_WRITE_TOOLS = new Set(['file_operation', 'run_powershell', ...DESKTOP_WRITE_TOOLS])
+export const PC_WRITE_TOOLS = new Set(['file_operation', 'run_powershell', ...DESKTOP_WRITE_TOOLS, ...DOCUMENT_WRITE_TOOLS])
 
 /**
  * @param {{ allowWrites: boolean }} opts
@@ -793,7 +794,8 @@ foreach ($x in $p) { [void]$x.CloseMainWindow() }
     alwaysLoad: true,
     tools: (() => {
       const desk = desktopTools({ allowWrites, ps })
-      return [...safe, ...desk.safe, ...(allowWrites ? [...writes, ...desk.writes] : [])]
+      const docs = documentTools({ ps, resolveUserPath, protectedProblem, ok, fail })
+      return [...safe, ...desk.safe, ...(allowWrites ? [...writes, ...desk.writes, ...docs] : [])]
     })(),
   })
 }
