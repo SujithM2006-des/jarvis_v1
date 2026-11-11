@@ -273,13 +273,27 @@ def main():
     stat_at, stat_peak, stat_score = time.monotonic(), 0, 0.0
 
     paused = False
+    last_mute_check = 0.0
     while True:
         try:
             # The kill switch (desktop shortcut, scripts/jarvis-switch.ps1).
             # While it is off: microphone closed, phrase ignored, nothing
             # started — including at login, since this runs from Startup.
             off = KILL_SWITCH.exists()
-            if off or MUTED.exists():
+            muted = MUTED.exists()
+            # A mute lasts only while JARVIS is open. Muted and then closed,
+            # nothing on screen could unmute him, and "Hey Jarvis" stayed dead
+            # until someone found ~/.jarvis/muted by hand.
+            if muted and not off and time.monotonic() - last_mute_check > 3:
+                last_mute_check = time.monotonic()
+                if not bridge()[0]:
+                    try:
+                        MUTED.unlink()
+                    except OSError:
+                        pass
+                    muted = False
+                    log("JARVIS is closed - mute lifted")
+            if off or muted:
                 if not paused:
                     paused = True
                     log("switched OFF - not listening" if off else "microphone MUTED - not listening")

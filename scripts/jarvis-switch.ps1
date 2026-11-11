@@ -104,6 +104,18 @@ function Stop-Jarvis {
   Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" |
     Where-Object { $_.CommandLine -match 'npm start -- --writes' } |
     ForEach-Object { & taskkill.exe /T /F /PID $_.ProcessId | Out-Null }
+  # The onscreen popup.
+  Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+    Where-Object { $_.CommandLine -like '*jarvis-main*popup.ps1*' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
+# Popup mode (~/.jarvis/popup-mode): JARVIS himself starts with the listener,
+# main window minimised, the popup on screen.
+$popupMode = Join-Path $dir 'popup-mode'
+function Start-PopupJarvis {
+  if (-not (Test-Path $popupMode)) { return }
+  Start-Process -FilePath cmd.exe -ArgumentList '/c', "`"$root\start-jarvis.bat`"" -WorkingDirectory $root -WindowStyle Hidden
 }
 
 $pyw = Join-Path $dir 'wake-venv\Scripts\pythonw.exe'
@@ -147,6 +159,7 @@ if ($Boot) {
     Set-Shortcut $false
   } else {
     Start-Listener
+    Start-PopupJarvis
     Set-Shortcut $true
   }
   return
@@ -167,6 +180,7 @@ if ($isOn) {
 } else {
   Remove-Item $flag -Force -ErrorAction SilentlyContinue
   Start-Listener
+  Start-PopupJarvis
   Set-Shortcut $true
   Show-Toast 'JARVIS is ON' 'Say "Hey Jarvis" whenever you need him.'
 }

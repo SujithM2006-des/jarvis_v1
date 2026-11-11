@@ -16,7 +16,16 @@ if /i "%~1"=="wake" set "SPLASH=%SPLASH%?wake=1"
 rem The brain, unless it is already running.
 curl -s -o nul -m 2 http://127.0.0.1:8787/health || start "JARVIS brain" /min cmd /k "npm start -- --writes"
 
+rem Popup mode (%USERPROFILE%\.jarvis\popup-mode exists): the main window starts
+rem minimised and works in the background; the small popup is the face.
+set "SIZE=--start-maximized"
+set "SHOW="
+if exist "%USERPROFILE%\.jarvis\popup-mode" (
+  set "SIZE="
+  set "SHOW=/min"
+)
+
 rem Own Chrome profile so these flags apply even when normal Chrome is open:
 rem they stop Chrome pausing the page (and its microphone) when other windows cover it,
 rem allow sound without a click, and put the voice model on the NVIDIA GPU.
-start "" chrome --user-data-dir="%USERPROFILE%\.jarvis\face-profile" --app="%SPLASH%" --start-maximized --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-background-timer-throttling --autoplay-policy=no-user-gesture-required --force_high_performance_gpu
+start "" %SHOW% chrome --user-data-dir="%USERPROFILE%\.jarvis\face-profile" --app="%SPLASH%" %SIZE% --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-background-timer-throttling --autoplay-policy=no-user-gesture-required --force_high_performance_gpu

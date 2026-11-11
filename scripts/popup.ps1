@@ -14,6 +14,30 @@ $bridge = 'http://127.0.0.1:8787'
 $tokenFile = Join-Path $env:USERPROFILE '.jarvis\bridge-token'
 function Auth { try { @{ 'x-jarvis-token' = ([IO.File]::ReadAllText($tokenFile)).Trim() } } catch { @{} } }
 
+# One popup at a time. Exit code 3 tells the bridge one is already open, so it
+# does not try to reopen this one.
+$script:single = New-Object System.Threading.Mutex($false, 'Local\JarvisPopup')
+try { $mine = $script:single.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $mine = $true }
+if (-not $mine) { exit 3 }
+
+# Popup mode (~/.jarvis/popup-mode): this panel is JARVIS's face. The X tucks
+# it away instead of closing it, and if JARVIS is not running, typing a request
+# or tapping the mic starts him (minimised) and hands the request over.
+function PopupMode { Test-Path (Join-Path $env:USERPROFILE '.jarvis\popup-mode') }
+$jarvisRoot = Split-Path -Parent $PSScriptRoot
+$script:lastStart = [datetime]::MinValue
+function Start-Jarvis([string]$text) {
+  if (((Get-Date) - $script:lastStart).TotalSeconds -lt 45) { return }
+  $script:lastStart = Get-Date
+  if ($text) {
+    $json = @{ text = $text; at = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() } | ConvertTo-Json -Compress
+    # No BOM: the bridge parses this as plain JSON.
+    try { [IO.File]::WriteAllText((Join-Path $env:USERPROFILE '.jarvis\pending-command.json'), $json) } catch {}
+  }
+  Start-Process -FilePath cmd.exe -ArgumentList '/c', "`"$jarvisRoot\start-jarvis.bat`"", 'wake' -WindowStyle Hidden
+}
+function Starting { ((Get-Date) - $script:lastStart).TotalSeconds -lt 60 }
+
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -207,7 +231,8 @@ $win.Add_Closing({
 })
 
 $el.Header.Add_MouseLeftButtonDown({ $win.DragMove() })
-$el.Close.Add_Click({ $win.Close() })
+$el.Close.Add_Click({ if (PopupMode) { Collapse-Panel } else { $win.Close() } })
+if (PopupMode) { $el.Close.ToolTip = 'Tuck away (click the notch at the top to open it again)' }
 
 function Post([string]$path, $body, [int]$timeout = 3) {
   try {
@@ -376,6 +401,12 @@ function Send-Input {
     $script:draft = ''
     $el.Input.Text = ''
     $script:files.Clear(); Update-Attach
+  } elseif ((PopupMode) -and $text) {
+    # Not running: start him and hand the request over when he is up.
+    Start-Jarvis $text
+    if ($text) { $script:lastSent = $text }
+    $el.Input.Text = ''
+    $el.Status.Text = '  ·  starting JARVIS…'
   } else { $el.Status.Text = '  ·  JARVIS is not running' }
 }
 $el.Send.Add_Click({ Send-Input })
@@ -390,7 +421,9 @@ $el.Mute.Add_Click({
   if (-not (Post '/popup/mute' $null)) { $el.Status.Text = '  ·  JARVIS is not running' }
 })
 $el.Mic.Add_Click({
-  if (-not (Post '/popup/mic' $null)) { $el.Status.Text = '  ·  JARVIS is not running' }
+  if (Post '/popup/mic' $null) { return }
+  if (PopupMode) { Start-Jarvis ''; $el.Status.Text = '  ·  starting JARVIS…' }
+  else { $el.Status.Text = '  ·  JARVIS is not running' }
 })
 
 $labels = @{ dormant = 'standby'; waking = 'listening'; listening = 'listening'; thinking = 'thinking';
@@ -446,7 +479,7 @@ $timer.Add_Tick({
       $el.Scroll.ScrollToEnd()
     }
   } catch {
-    $el.Status.Text = '  ·  JARVIS is not running'
+    $el.Status.Text = if (Starting) { '  ·  starting JARVIS…' } else { '  ·  JARVIS is not running' }
     $el.Dot.Opacity = 0.25
   }
 })

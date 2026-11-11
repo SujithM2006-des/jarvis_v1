@@ -94,20 +94,71 @@ const broadcast = (msg) => {
 let popupProc = null
 const PS_ARGS = ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File']
 
+/**
+ * Popup mode: ~/.jarvis/popup-mode exists. The popup is then the face — opened
+ * when the bridge starts, and opened again if it ever closes or crashes — and
+ * the main window works minimised in the background. Read live, so creating or
+ * deleting the file takes effect without a restart.
+ */
+const POPUP_MODE_FILE = join(homedir(), '.jarvis', 'popup-mode')
+const popupMode = () => existsSync(POPUP_MODE_FILE)
+let popupHiddenOnPurpose = false
+let popupRespawns = []
+
 /** Open the onscreen popup, unless it is already open. */
 function showPopup() {
+  popupHiddenOnPurpose = false
   if (popupProc && popupProc.exitCode === null) return false
-  popupProc = spawnProcess('powershell.exe', [...PS_ARGS, join(SCRIPTS, 'popup.ps1')], {
+  const proc = spawnProcess('powershell.exe', [...PS_ARGS, join(SCRIPTS, 'popup.ps1')], {
     stdio: 'ignore',
     windowsHide: true,
   })
-  popupProc.on('exit', () => {
-    popupProc = null
+  popupProc = proc
+  proc.on('exit', (code) => {
+    if (popupProc === proc) popupProc = null
+    // Exit code 3: another popup is already open (one at a time). Otherwise,
+    // in popup mode, bring it back — at most 5 times a minute, so a popup that
+    // cannot start does not spin.
+    if (code === 3 || popupHiddenOnPurpose || !popupMode()) return
+    const now = Date.now()
+    popupRespawns = popupRespawns.filter((t) => now - t < 60_000)
+    if (popupRespawns.length >= 5) return console.log('[jarvis] popup keeps closing - not reopening it again')
+    popupRespawns.push(now)
+    setTimeout(() => {
+      if (!popupHiddenOnPurpose && popupMode()) showPopup()
+    }, 1500)
   })
   return true
 }
 
+/**
+ * Popup mode, main window closed: open it again (minimised, by the launcher)
+ * and hand it what was typed, the way the wake listener hands over a command
+ * spoken while JARVIS was starting. At most once every 45 s.
+ */
+let lastWindowStart = 0
+function startWindow(text = '') {
+  if (Date.now() - lastWindowStart < 45_000) return
+  lastWindowStart = Date.now()
+  if (text) {
+    try {
+      writeFileSync(join(homedir(), '.jarvis', 'pending-command.json'), JSON.stringify({ text, at: Date.now() }))
+    } catch {
+      /* the window still opens; the request is lost */
+    }
+  }
+  console.log('[jarvis] popup mode: no window connected - opening it')
+  const child = spawnProcess('cmd.exe', ['/c', join(SCRIPTS, '..', 'start-jarvis.bat'), 'wake'], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  })
+  child.on('error', () => {})
+  child.unref()
+}
+
 function hidePopup() {
+  popupHiddenOnPurpose = true
   if (!popupProc) return false
   popupProc.kill()
   popupProc = null
@@ -1204,6 +1255,11 @@ const handleRequest = async (req, res) => {
       text = composeWithAttachments(text, att)
     }
     const sent = text ? broadcast({ type: 'popup-ask', text }) : 0
+    if (!sent && text && popupMode()) {
+      startWindow(text)
+      res.writeHead(202, { ...cors, 'content-type': 'application/json' })
+      return res.end(JSON.stringify({ sent: 0, starting: true }))
+    }
     res.writeHead(sent ? 200 : 409, { ...cors, 'content-type': 'application/json' })
     return res.end(JSON.stringify({ sent }))
   }
@@ -1219,6 +1275,11 @@ const handleRequest = async (req, res) => {
   if (req.method === 'POST' && req.url === '/popup/mic') {
     if (muted) setMuted(false)
     const sent = broadcast({ type: 'mic' })
+    if (!sent && popupMode()) {
+      startWindow()
+      res.writeHead(202, { ...cors, 'content-type': 'application/json; charset=utf-8' })
+      return res.end(JSON.stringify({ sent: 0, starting: true }))
+    }
     res.writeHead(sent ? 200 : 409, { ...cors, 'content-type': 'application/json; charset=utf-8' })
     return res.end(JSON.stringify({ sent }))
   }
@@ -1615,6 +1676,8 @@ server.on('error', (err) => {
 await new Promise((resolve) => server.listen(PORT, HOST, resolve))
 // This bridge owns the port: now, and only now, its key is the one to use.
 publishToken()
+// Popup mode: the popup is the face, open from the start.
+if (popupMode()) setTimeout(showPopup, 1500)
 
 const LOOPBACK = HOST === '127.0.0.1' || HOST === '::1' || HOST === 'localhost'
 const bound = server.address()
