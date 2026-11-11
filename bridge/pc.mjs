@@ -412,7 +412,7 @@ export const DESTRUCTIVE_PS = new RegExp(
   'i',
 )
 
-export const PC_WRITE_TOOLS = new Set(['file_operation', 'run_powershell', ...DESKTOP_WRITE_TOOLS, ...DOCUMENT_WRITE_TOOLS])
+export const PC_WRITE_TOOLS = new Set(['file_operation', 'zip_files', 'run_powershell', ...DESKTOP_WRITE_TOOLS, ...DOCUMENT_WRITE_TOOLS])
 
 /**
  * @param {{ allowWrites: boolean }} opts
@@ -740,6 +740,70 @@ $rows | Sort-Object mb -Descending | ForEach-Object {
   ]
 
   const writes = [
+    tool(
+      'zip_files',
+      'Zip a folder or file into a .zip (to send it, back it up, share it). Use this — never ' +
+        'run_powershell / Compress-Archive, which times out on big folders. By default it leaves ' +
+        'out what can be rebuilt (node_modules, .git, dist, build, caches, virtualenvs) and always ' +
+        'leaves out secrets (.env files, keys). Returns the zip path and size: pass that path ' +
+        'straight to whatsapp send_file.',
+      {
+        source: pathArg('The folder or file to zip'),
+        destination: z.string().optional().describe('Where to save the .zip (folder or full path). Default: next to the source.'),
+        everything: z.boolean().optional().describe('Include node_modules, .git, build output too — only if the user asks for everything.'),
+      },
+      async ({ source, destination, everything }) => {
+        try {
+          const src = await resolveUserPath(source)
+          const bad = protectedProblem(src)
+          if (bad) return fail(`Refused: ${bad}.`)
+          const isDir = (await stat(src)).isDirectory()
+          // report.pdf -> report.zip; a folder keeps its whole name (my.project -> my.project.zip).
+          const name = (isDir ? basename(src) : basename(src, extname(src))) || 'archive'
+          let out = destination ? await resolveUserPath(destination) : join(dirname(src), `${name}.zip`)
+          try {
+            if ((await stat(out)).isDirectory()) out = join(out, `${name}.zip`)
+          } catch {
+            /* a new path */
+          }
+          if (!/\.zip$/i.test(out)) out += '.zip'
+          const badOut = protectedProblem(out, { forWrite: true })
+          if (badOut) return fail(`Refused: ${badOut}.`)
+          // Never overwrite: name (2).zip, name (3).zip, …
+          for (let n = 2; await stat(out).then(() => true, () => false); n++) {
+            out = out.replace(/(?: \(\d+\))?\.zip$/i, ` (${n}).zip`)
+          }
+
+          const skip = ['.env', '.env.*', '*.pem', '*.key', '*.pfx', '*.p12', 'id_rsa', 'id_ed25519', '.git-credentials', '.npmrc']
+          if (!everything) {
+            skip.push('node_modules', '.git', 'dist', 'build', '.next', '.vite', '__pycache__', '.venv', 'venv', '.cache', '*.log')
+          }
+          const tar = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+          const args = ['-a', '-c', '-f', out, ...skip.flatMap((s) => ['--exclude', s]), '-C', dirname(src), basename(src)]
+          const started = Date.now()
+          const warn = await new Promise((resolve, reject) => {
+            execFile(tar, args, { timeout: 600_000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, _o, stderr) => {
+              if (err?.killed) return reject(new Error('Zipping took over 10 minutes and was stopped.'))
+              // tar exits non-zero for a locked or unreadable file but still writes the rest.
+              resolve(err ? String(stderr || err.message).trim().split('\n').slice(0, 3).join(' ') : '')
+            })
+          })
+          const size = await stat(out).then((s) => s.size, () => 0)
+          if (!size) return fail(`The zip was not made. ${warn}`.trim())
+          const mb = (size / 1048576).toFixed(size < 10485760 ? 1 : 0)
+          const secs = Math.round((Date.now() - started) / 1000)
+          return ok(
+            `Zipped ${basename(src)} to ${out} (${mb} MB, ${secs}s).` +
+              (everything ? '' : ' Left out node_modules, .git, build output and caches.') +
+              ' Secrets (.env, keys) were left out.' +
+              (size > 2_000_000_000 ? ' Too big for WhatsApp (2 GB limit).' : '') +
+              (warn ? ` Some files could not be read: ${warn}` : ''),
+          )
+        } catch (err) {
+          return fail(err.code === 'ENOENT' ? 'That file or folder does not exist.' : err.message)
+        }
+      },
+    ),
     tool(
       'file_operation',
       'Change files: copy, move, rename, recycle (send to the Recycle Bin, never a ' +

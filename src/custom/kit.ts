@@ -49,7 +49,7 @@ export type Status = {
 /** Stock parts a layout can replace. */
 export type StockPart =
   | 'frame' | 'header' | 'telemetry' | 'dock' | 'suggestions' | 'scene'
-  | 'scanlines' | 'caption' | 'hints' | 'transcript'
+  | 'scanlines' | 'caption' | 'hints' | 'transcript' | 'error'
 
 let hidden: readonly string[] = []
 const hiddenSubs = new Set<() => void>()
@@ -128,9 +128,20 @@ export function useStatus(ms = 3000): Status | null {
   return s
 }
 
+const muteSubs = new Set<() => void>()
+
 /** Whether the microphone is muted (from the popup or by voice), refreshed every 2 s. */
 export function useMuted(): boolean {
   const [m, set] = useState(false)
+  const [bump, setBump] = useState(0)
+  // Re-read at once after a tap on a mute button, not on the next 2 s tick.
+  useEffect(() => {
+    const f = () => setBump((b) => b + 1)
+    muteSubs.add(f)
+    return () => {
+      muteSubs.delete(f)
+    }
+  }, [])
   useEffect(() => {
     let alive = true
     const pull = async () => {
@@ -147,7 +158,7 @@ export function useMuted(): boolean {
       alive = false
       window.clearInterval(id)
     }
-  }, [])
+  }, [bump])
   return m
 }
 
@@ -278,7 +289,11 @@ export const ask = (text: string) => (text.trim() ? post('/popup/ask', { text: t
 /** Start listening now (or, if already listening, stand by). */
 export const listen = () => post('/popup/mic')
 /** Mute or unmute the microphone (toggles without an argument). */
-export const mute = (on?: boolean) => post('/popup/mute', on === undefined ? {} : { on })
+export const mute = (on?: boolean) =>
+  post('/popup/mute', on === undefined ? {} : { on }).then((ok) => {
+    muteSubs.forEach((f) => f())
+    return ok
+  })
 /** Circle to Search. */
 export const circle = () => post('/circle')
 /** Open the onscreen popup. */

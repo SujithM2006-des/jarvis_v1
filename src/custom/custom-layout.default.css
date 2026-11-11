@@ -250,10 +250,13 @@ body {
   pointer-events: auto;
 }
 .vg-pill-muted:hover { background: rgba(160, 30, 40, 0.5) !important; }
+/* Muted: the mic just dims — the mute toggle beside it is the one red signal. */
 .vg-mic.vg-muted {
-  background: linear-gradient(135deg, #e0465a, #8a1a2a) !important;
-  box-shadow: 0 0 18px rgba(224, 70, 90, 0.55);
+  opacity: 0.45;
+  box-shadow: none !important;
+  filter: grayscale(0.6);
 }
+.vg-mic.vg-muted:hover { opacity: 0.8; }
 .vg-when {
   display: grid;
   justify-items: end;
@@ -1424,3 +1427,102 @@ body {
   margin-top: 4.5vh;
 }
 .vg-step { height: 24px; font-size: 11.5px; }
+/* Editing a request: the pencil, then an inline box to fix and resend it. */
+.vg-msg { grid-template-columns: 84px 1fr auto; }
+.vg-pencil {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--ink-3) !important;
+  border: 1px solid transparent !important;
+  opacity: 0.55;
+  transition: all 0.2s var(--ease);
+}
+.vg-msg:hover .vg-pencil { opacity: 1; }
+.vg-pencil:hover {
+  color: #fff !important;
+  border-color: var(--edge-hi) !important;
+  background: rgba(63, 182, 255, 0.16) !important;
+}
+.vg-edit {
+  grid-column: 2 / 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.vg-edit input {
+  flex: 1;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: rgba(4, 14, 34, 0.95);
+  color: var(--ink);
+  font: 400 13px 'Inter', sans-serif;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(63, 182, 255, 0.15);
+}
+.vg-edit-ok, .vg-edit-x {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+.vg-edit-ok { color: #fff !important; background: linear-gradient(135deg, #3fb6ff, #1546d6) !important; }
+.vg-edit-x { color: var(--ink-2) !important; border: 1px solid var(--edge) !important; }
+.vg-edit-x:hover { color: #fff !important; }
+/* The mute toggle in the ask bar, and the clickable MIC chip. */
+.vg-mute {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  color: var(--ink-2) !important;
+  border: 1px solid var(--edge) !important;
+  transition: all 0.25s var(--ease);
+}
+.vg-mute:hover {
+  color: #fff !important;
+  border-color: var(--edge-hi) !important;
+  background: rgba(63, 182, 255, 0.14) !important;
+}
+.vg-mute.vg-mute-on {
+  color: #fff !important;
+  border-color: rgba(255, 110, 120, 0.7) !important;
+  background: linear-gradient(135deg, #e0465a, #8a1a2a) !important;
+  box-shadow: 0 0 16px rgba(224, 70, 90, 0.5);
+}
+.vg-sc-btn {
+  cursor: pointer;
+  pointer-events: auto;
+  font: 500 10.5px 'JetBrains Mono', monospace !important;
+  letter-spacing: 0.14em;
+  transition: border-color 0.2s, background 0.2s;
+}
+.vg-sc-btn:hover { border-color: var(--edge-hi) !important; background: rgba(63, 182, 255, 0.12) !important; }
+/* ---- error line, above the ask bar (replaces the stock one that sat on it) */
+.vg-ask { position: relative; }
+.vg-ask-error {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: calc(100% + 8px);
+  padding: 6px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #ffb4b4;
+  background: rgba(60, 10, 18, 0.82);
+  border: 1px solid rgba(255, 100, 110, 0.35);
+  backdrop-filter: blur(6px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  animation: vg-err-in 0.25s ease-out;
+}
+@keyframes vg-err-in { from { opacity: 0; transform: translateY(4px); } }

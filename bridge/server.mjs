@@ -701,8 +701,21 @@ const PROMPT_PC = `This PC — the \`jarvis_pc\` tools, for anything on the user
   \`explorer_selection\` if you do not already have its full path.
 - Copying, moving, renaming and recycling files is \`file_operation\`. If a
   name matches more than one file, ask which one rather than guessing.
+- Their documents (Word, Excel, PowerPoint, PDF, text, code): find the file
+  (\`find_files\`, or \`explorer_selection\` for "this file"), then
+  \`read_document\`. "Review / check / proofread / summarise" — read it and
+  give your findings plainly; change nothing unless asked. "Edit / fix /
+  correct / add / update / rename X to Y in it" — read it, then
+  \`edit_document\` with exact text from the document, and say in one
+  sentence what you changed. For sweeping rewrites, say what you will change
+  and ask before doing it. Every edit is backed up; "undo that" is
+  \`undo_document_edit\`.
+- "Zip this folder" is \`zip_files\` — never Compress-Archive in run_powershell,
+  which times out on big folders. It skips node_modules, .git and build output
+  unless they ask for everything. To send a folder on WhatsApp: \`zip_files\`,
+  then \`send_file\` with the zip path it returned — one zip, no retries.
 - Anything else on the machine — battery, wifi, disk space, system info,
-  zipping, a program with arguments — is \`run_powershell\`. Never run anything
+  a program with arguments — is \`run_powershell\`. Never run anything
   destructive unless they asked for exactly that.
 - Act, then confirm in a few words. Never read a path aloud; say the file name.
 
@@ -1723,6 +1736,11 @@ wss.on('connection', (socket) => {
     if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(msg))
   }
 
+  // Proof of life. A long tool (zipping a big folder, uploading to WhatsApp)
+  // can run for minutes without a single frame, and the interface used to
+  // give up on the turn ("the bridge went quiet") while the work went on.
+  const heartbeat = setInterval(() => send({ type: 'ping' }), 20_000)
+
   /**
    * Which question the agent is currently answering.
    *
@@ -2218,6 +2236,7 @@ wss.on('connection', (socket) => {
 
   socket.on('close', () => {
     console.log('[jarvis] client disconnected')
+    clearInterval(heartbeat)
     CLIENTS.delete(socket)
     closed = true
     deliver?.(null)

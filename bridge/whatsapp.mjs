@@ -373,6 +373,12 @@ async function sendFiles(contact, files, caption, asDocument) {
     await setViaInput(p, files, media)
   }
 
+  // A big file (a zipped project) takes the browser a while to read before
+  // the preview shows: 20 s, plus 10 s per 10 MB, up to 3 minutes.
+  let bytes = 0
+  for (const f of files) bytes += (await stat(f).catch(() => ({ size: 0 }))).size
+  const waitMs = Math.min(180_000, 20_000 + Math.ceil(bytes / 10_000_000) * 10_000)
+
   // The preview: optional caption, then the send button.
   const send = await firstVisible(p, [
     // Labelled "Send 1 selected" / "Send 3 selected" in the 2026 preview.
@@ -380,7 +386,7 @@ async function sendFiles(contact, files, caption, asDocument) {
     () => p.locator('[aria-label="Send"]'),
     () => p.locator('span[data-icon="send"]'),
     () => p.locator('span[data-icon="wds-ic-send-filled"]'),
-  ], 20_000)
+  ], waitMs)
   if (!send) await failWith(p, 'preview', 'The file preview did not appear. Nothing was sent.')
 
   if (caption) {
@@ -398,7 +404,7 @@ async function sendFiles(contact, files, caption, asDocument) {
   }
   await send.click()
   // The preview closing is WhatsApp accepting the upload.
-  await send.waitFor({ state: 'detached', timeout: 60_000 }).catch(() => {})
+  await send.waitFor({ state: 'detached', timeout: Math.max(60_000, waitMs * 2) }).catch(() => {})
   await p.waitForTimeout(800)
   return name
 }

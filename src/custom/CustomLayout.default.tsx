@@ -33,7 +33,7 @@ import './custom-layout.css'
  */
 
 /** Stock parts this layout replaces (see hide.css) — applied by useHide below. */
-const HIDE: StockPart[] = ['frame', 'header', 'telemetry', 'dock', 'suggestions', 'scene', 'scanlines', 'caption', 'hints', 'transcript']
+const HIDE: StockPart[] = ['frame', 'header', 'telemetry', 'dock', 'suggestions', 'scene', 'scanlines', 'caption', 'hints', 'transcript', 'error']
 
 
 // ------------------------------------------------------------------- icons
@@ -105,6 +105,12 @@ const I = {
   send: <path d="M4 12 20 4l-4.5 16-3.5-6.5z" />,
   plus: <path d="M12 5v14M5 12h14" />,
   close: <path d="M6 6l12 12M18 6L6 18" />,
+  check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  pencil: (
+    <>
+      <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z" /><path d="M13.5 6.5l4 4" />
+    </>
+  ),
   left: <path d="M15 6l-6 6 6 6" />,
   right: <path d="M9 6l6 6-6 6" />,
   calendar: (
@@ -514,9 +520,18 @@ function Conversation({ idle }: { idle: boolean }) {
   const { turns } = useJarvis()
   const ref = useRef<HTMLDivElement>(null)
   const recent = turns.slice(-4)
+  // Correcting a request (the pencil): edit it in place and send it again.
+  // Sending stops whatever he was doing for the wrong one and starts afresh.
+  const [editing, setEditing] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
+  const resend = () => {
+    const t = draft.trim()
+    if (t) void ask(t)
+    setEditing(null)
+  }
   useEffect(() => {
-    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight
-  }, [turns])
+    if (ref.current && !editing) ref.current.scrollTop = ref.current.scrollHeight
+  }, [turns, editing])
   return (
     <div className="vg-convo-wrap">
       <div className="vg-convo" ref={ref}>
@@ -529,7 +544,42 @@ function Conversation({ idle }: { idle: boolean }) {
                 <span className="vg-badge">{t.role === 'user' ? 'U' : 'J'}</span>
                 {t.role === 'user' ? 'You' : 'Jarvis'}
               </span>
-              <span className="vg-said">{t.text}</span>
+              {t.role === 'user' && editing === t.id ? (
+                <span className="vg-edit">
+                  <input
+                    autoFocus
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') resend()
+                      if (e.key === 'Escape') setEditing(null)
+                    }}
+                  />
+                  <button type="button" className="vg-edit-ok" title="Send the corrected request" onClick={resend}>
+                    <Icon size={14} w={2.2}>{I.check}</Icon>
+                  </button>
+                  <button type="button" className="vg-edit-x" title="Cancel" onClick={() => setEditing(null)}>
+                    <Icon size={14} w={2}>{I.close}</Icon>
+                  </button>
+                </span>
+              ) : (
+                <>
+                  <span className="vg-said">{t.text}</span>
+                  {t.role === 'user' && (
+                    <button
+                      type="button"
+                      className="vg-pencil"
+                      title="Edit this request and send it again"
+                      onClick={() => {
+                        setDraft(t.text)
+                        setEditing(t.id)
+                      }}
+                    >
+                      <Icon size={14}>{I.pencil}</Icon>
+                    </button>
+                  )}
+                </>
+              )}
             </div>
           ))
         )}
@@ -549,7 +599,7 @@ function Conversation({ idle }: { idle: boolean }) {
 }
 
 function AskBar() {
-  const { phase, level, caption } = useJarvis()
+  const { phase, level, caption, error } = useJarvis()
   const muted = useMuted()
   const [text, setText] = useState('')
   const listening = !muted && (phase === 'listening' || phase === 'waking')
@@ -560,6 +610,7 @@ function AskBar() {
   }
   return (
     <div className={`vg-ask ${listening ? 'vg-live' : ''}`}>
+      {error && <div className="vg-ask-error" role="alert">{error}</div>}
       <Wave level={listening ? level : 0} bars={7} idle={listening ? 0.45 : 0.3} className="vg-ask-wave" />
       <input
         value={text}
@@ -574,9 +625,19 @@ function AskBar() {
         title={muted ? 'Microphone muted — tap to unmute' : listening ? 'Stand by' : 'Talk to JARVIS'}
         onClick={() => void listen()}
       >
-        <Icon size={20}>
+        <Icon size={20}>{I.mic}</Icon>
+      </button>
+      {/* Mute: stop him listening for a while; tap again (or the mic) to unmute. */}
+      <button
+        type="button"
+        className={`vg-mute ${muted ? 'vg-mute-on' : ''}`}
+        title={muted ? 'Microphone muted — tap to unmute' : 'Mute the microphone'}
+        aria-pressed={muted}
+        onClick={() => void mute(!muted)}
+      >
+        <Icon size={18}>
           {I.mic}
-          {muted && <path d="M4 4l16 16" />}
+          <path d="M4 4l16 16" />
         </Icon>
       </button>
       <button type="button" className="vg-send" title="Send" onClick={send} disabled={!text.trim()}>
@@ -699,10 +760,15 @@ export default function CustomLayout() {
               <span className="vg-eq"><i /><i /><i /><i /></span>
               Voice · {phaseLabel[phase] ?? 'Online'}
             </span>
-            <span className={`vg-sc ${muted ? 'vg-bad' : 'vg-ok'}`}>
+            <button
+              type="button"
+              className={`vg-sc vg-sc-btn ${muted ? 'vg-bad' : 'vg-ok'}`}
+              title={muted ? 'Tap to unmute the microphone' : 'Tap to mute the microphone'}
+              onClick={() => void mute(!muted)}
+            >
               <i />
               Mic {muted ? 'muted' : 'live'}
-            </span>
+            </button>
           </span>
           <span className="vg-hm-line vg-flip" />
         </div>

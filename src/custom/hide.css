@@ -13,3 +13,4 @@ html.cl-hide-scanlines body::after { display: none !important; }
 html.cl-hide-scene .scene { opacity: 0 !important; pointer-events: none !important; }
 html.cl-hide-transcript .log { display: none !important; }
 html.cl-hide-hints .hud-bottom { display: none !important; }
+html.cl-hide-error .hud .error { display: none !important; }

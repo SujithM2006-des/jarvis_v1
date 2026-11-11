@@ -2,10 +2,10 @@ import { tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { basename, extname, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
+import { basename, dirname, extname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 /**
  * Making documents: a PDF (an abstract of what is on screen, notes, a report)
@@ -15,8 +15,51 @@ import { pathToFileURL } from 'node:url'
  * is always there.
  */
 
-/** Tools here that create files; withheld without write access. */
-export const DOCUMENT_WRITE_TOOLS = ['make_pdf', 'save_document']
+/** Tools here that create or change files; withheld without write access. */
+export const DOCUMENT_WRITE_TOOLS = ['make_pdf', 'save_document', 'edit_document', 'undo_document_edit']
+
+// Reading and editing the user's own documents. Office files go through
+// scripts/doc_tool.py (python-docx, openpyxl, python-pptx in the wake
+// listener's Python — no Office needed); text and code are handled here.
+// Every edit is backed up first, so it can always be undone.
+const DOC_TOOL = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'doc_tool.py')
+const PYTHON = join(homedir(), '.jarvis', 'wake-venv', 'Scripts', 'python.exe')
+const BACKUPS = join(homedir(), '.jarvis', 'doc-backups')
+const BACKUP_INDEX = join(BACKUPS, 'index.json')
+const OFFICE = new Set(['.docx', '.xlsx', '.xlsm', '.pptx'])
+const TEXTISH = new Set([
+  '.txt', '.md', '.csv', '.tsv', '.json', '.xml', '.html', '.htm', '.css', '.js', '.mjs', '.ts', '.tsx', '.jsx',
+  '.py', '.java', '.c', '.h', '.cpp', '.cs', '.go', '.rs', '.php', '.rb', '.sql', '.yml', '.yaml', '.ini', '.log',
+  '.bat', '.ps1', '.sh', '.kt', '.swift', '.dart', '.vue',
+])
+
+function runDocTool(args, timeoutMs = 120_000) {
+  return new Promise((resolve, reject) => {
+    if (!existsSync(PYTHON)) return reject(new Error('the document engine (~/.jarvis/wake-venv) is not installed'))
+    execFile(PYTHON, [DOC_TOOL, ...args], { timeout: timeoutMs, windowsHide: true, maxBuffer: 32 * 1024 * 1024, encoding: 'utf8' },
+      (err, stdout, stderr) => (err ? reject(new Error(String(stderr || err.message).trim().split('\n').pop())) : resolve(stdout)))
+  })
+}
+
+async function readIndex() {
+  try {
+    return JSON.parse(await readFile(BACKUP_INDEX, 'utf8'))
+  } catch {
+    return []
+  }
+}
+
+/** Copy the file aside before changing it; remembered for undo. */
+async function backupDoc(file) {
+  await mkdir(BACKUPS, { recursive: true })
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const copy = join(BACKUPS, `${stamp}__${basename(file)}`)
+  await copyFile(file, copy)
+  const index = await readIndex()
+  index.push({ original: file, backup: copy, at: Date.now() })
+  await writeFile(BACKUP_INDEX, JSON.stringify(index.slice(-300), null, 2))
+  return copy
+}
 
 const BROWSERS = [
   join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Google\\Chrome\\Application\\chrome.exe'),
@@ -221,6 +264,151 @@ export function documentTools({ ps, resolveUserPath, protectedProblem, ok, fail 
           return fail(`Could not make the PDF: ${err.message}`)
         } finally {
           rm(work, { recursive: true, force: true }).catch(() => {})
+        }
+      },
+    ),
+    tool(
+      'read_document',
+      'Open one of the user\'s documents to review, summarise, check or answer questions about it: ' +
+        'Word (.docx), Excel (.xlsx), PowerPoint (.pptx), PDF, and text or code files (txt, md, csv, ' +
+        'json, py, java, js, html …). Give the full path — find it first with find_files or ' +
+        'explorer_selection ("this file"). Word comes back with headings (#), lists and tables; ' +
+        'Excel as cell=value per row; PowerPoint slide by slide. A PDF is copied somewhere you can ' +
+        'open it with the Read tool.',
+      { path: z.string().describe('Full path, or e.g. "documents\\\\report.docx".') },
+      async ({ path }) => {
+        try {
+          const file = await resolveUserPath(path)
+          const bad = protectedProblem(file)
+          if (bad) return fail(`Refused: ${bad}.`)
+          const info = await stat(file)
+          if (!info.isFile()) return fail('That is a folder, not a document.')
+          if (info.size > 30 * 1024 * 1024) return fail('That file is too large (30 MB limit).')
+          const ext = extname(file).toLowerCase()
+          if (OFFICE.has(ext)) {
+            const text = await runDocTool(['read', file])
+            return ok(`${basename(file)}:\n${text.length > 60_000 ? text.slice(0, 60_000) + '\n… (truncated)' : text}`)
+          }
+          if (ext === '.pdf') {
+            const dir = join(tmpdir(), 'jarvis-docs', String(Date.now()))
+            await mkdir(dir, { recursive: true })
+            const copy = join(dir, basename(file))
+            await copyFile(file, copy)
+            return ok(`Open the PDF with the Read tool at: ${copy}`)
+          }
+          if (TEXTISH.has(ext) || !ext) {
+            const text = await readFile(file, 'utf8')
+            return ok(`${basename(file)}:\n${text.length > 80_000 ? text.slice(0, 80_000) + '\n… (truncated)' : text}`)
+          }
+          return fail(`${ext} files cannot be read here. Word, Excel, PowerPoint, PDF and text/code files can.`)
+        } catch (err) {
+          return fail(err.code === 'ENOENT' ? 'That file does not exist — find it with find_files first.' : `Could not read it: ${err.message}`)
+        }
+      },
+    ),
+    tool(
+      'edit_document',
+      'Change one of the user\'s documents as they asked: fix wording, correct names or numbers, add ' +
+        'a paragraph or section, remove a line, update spreadsheet cells. ALWAYS read_document first, ' +
+        'and use exact text from it in "find". Edits: {op:"replace", find, replace, all?} (Word, ' +
+        'PowerPoint, Excel, text); {op:"append", text, style?} (Word, e.g. style "Heading 2"; text ' +
+        'files); {op:"delete_paragraph", find} (Word); {op:"set_cell", sheet?, cell, value} (Excel); ' +
+        '{op:"rewrite", text} (text/code files: the whole new content). The original is backed up ' +
+        'first — undo_document_edit restores it. If the file is open in Word/Excel, ask them to close ' +
+        'it. Then say in a sentence what you changed.',
+      {
+        path: z.string(),
+        edits: z
+          .array(
+            z.object({
+              op: z.enum(['replace', 'append', 'delete_paragraph', 'set_cell', 'rewrite']),
+              find: z.string().optional(),
+              replace: z.string().optional(),
+              all: z.boolean().optional(),
+              text: z.string().optional(),
+              style: z.string().optional(),
+              sheet: z.string().optional(),
+              cell: z.string().optional(),
+              value: z.union([z.string(), z.number()]).optional(),
+            }),
+          )
+          .min(1),
+      },
+      async ({ path, edits }) => {
+        try {
+          const file = await resolveUserPath(path)
+          const bad = protectedProblem(file, { forWrite: true })
+          if (bad) return fail(`Refused: ${bad}.`)
+          const ext = extname(file).toLowerCase()
+          if (!OFFICE.has(ext) && !TEXTISH.has(ext)) {
+            return fail(`${ext || 'That'} cannot be edited here (Word, Excel, PowerPoint and text/code files can).`)
+          }
+          await stat(file)
+          const backup = await backupDoc(file)
+          if (OFFICE.has(ext)) {
+            const ops = join(tmpdir(), `jarvis-edit-${Date.now()}.json`)
+            await writeFile(ops, JSON.stringify(edits))
+            try {
+              const r = JSON.parse(await runDocTool(['edit', file, ops]))
+              return ok(
+                `Edited ${basename(file)}: ${r.changes} change(s).` +
+                  (r.notes?.length ? ` Notes: ${r.notes.join('; ')}.` : '') +
+                  ` Backup kept (undo_document_edit restores it).`,
+              )
+            } finally {
+              rm(ops, { force: true }).catch(() => {})
+            }
+          }
+          // Text and code: done here.
+          let text = await readFile(file, 'utf8')
+          let changes = 0
+          const notes = []
+          for (const e of edits) {
+            if (e.op === 'rewrite' && typeof e.text === 'string') {
+              text = e.text
+              changes++
+            } else if (e.op === 'replace' && e.find) {
+              const n = text.split(e.find).length - 1
+              if (!n) notes.push(`not found: "${e.find.slice(0, 60)}"`)
+              text = e.all === false ? text.replace(e.find, e.replace ?? '') : text.split(e.find).join(e.replace ?? '')
+              changes += e.all === false ? Math.min(n, 1) : n
+            } else if (e.op === 'append' && e.text) {
+              text = text.replace(/\s*$/, '\n') + e.text + '\n'
+              changes++
+            } else {
+              notes.push(`${e.op}: not supported for text files`)
+            }
+          }
+          await writeFile(file, text, 'utf8')
+          return ok(
+            `Edited ${basename(file)}: ${changes} change(s).` +
+              (notes.length ? ` Notes: ${notes.join('; ')}.` : '') +
+              ` Backup kept at ${backup}.`,
+          )
+        } catch (err) {
+          if (err.code === 'ENOENT') return fail('That file does not exist — find it with find_files first.')
+          if (err.code === 'EBUSY' || err.code === 'EPERM') return fail('The file is open in another program — ask them to close it first.')
+          return fail(`Could not edit it: ${err.message}`)
+        }
+      },
+    ),
+    tool(
+      'undo_document_edit',
+      'Put a document back as it was before your last edit to it ("undo that", "put it back").',
+      { path: z.string() },
+      async ({ path }) => {
+        try {
+          const file = await resolveUserPath(path)
+          const index = await readIndex()
+          const i = index.map((e) => e.original.toLowerCase()).lastIndexOf(file.toLowerCase())
+          if (i < 0) return ok(`There is no earlier version of ${basename(file)} to go back to.`)
+          await copyFile(index[i].backup, file)
+          index.splice(i, 1)
+          await writeFile(BACKUP_INDEX, JSON.stringify(index, null, 2))
+          return ok(`Restored ${basename(file)} to how it was before the last edit.`)
+        } catch (err) {
+          if (err.code === 'EBUSY' || err.code === 'EPERM') return fail('The file is open in another program — ask them to close it first.')
+          return fail(`Could not restore it: ${err.message}`)
         }
       },
     ),
