@@ -1,21 +1,22 @@
 ﻿# JARVIS switch.
 #
 # Double-click the "JARVIS - ON / OFF" shortcut on the desktop to flip it.
-# Nothing related to JARVIS starts with Windows; this switch is the only way
-# to arm him.
 #
 #   ON   starts the background "Hey Jarvis" listener: say the phrase and
-#        JARVIS opens.
-#   OFF  stops the listener (microphone released) and shuts JARVIS down.
+#        JARVIS opens. It stays ON across restarts: at every sign-in the
+#        listener starts by itself (a hidden entry in the Startup folder),
+#        ready for "Hey Jarvis" with nothing to click.
+#   OFF  stops the listener (microphone released) and shuts JARVIS down, and
+#        stays OFF across restarts too, until switched on again.
 #
-# The real state is whether the listener is running, so after a restart
-# (when nothing is running) a double-click switches him ON, whatever the icon
-# last showed. Starting JARVIS by hand with start-jarvis.bat always works.
+# Only the small listener starts with Windows — JARVIS himself opens when you
+# say his name. The ~/.jarvis/disabled marker is what remembers OFF.
 #
 #   jarvis-switch.ps1            toggle
-#   jarvis-switch.ps1 -Install   only (re)create the desktop shortcut
+#   jarvis-switch.ps1 -Install   only (re)create the desktop and Startup shortcuts
+#   jarvis-switch.ps1 -Boot      what sign-in runs: start the listener unless OFF
 
-param([switch]$Install)
+param([switch]$Install, [switch]$Boot)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -122,7 +123,34 @@ function Stop-Listener {
   Get-Listener | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 
+# --- starting with Windows -------------------------------------------------------
+
+# A hidden entry in the user's Startup folder: at sign-in it runs this script
+# with -Boot, which starts the listener unless the switch is OFF.
+function Set-StartupEntry {
+  $startup = [Environment]::GetFolderPath('Startup')
+  $s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $startup 'JARVIS wake listener.lnk'))
+  $s.TargetPath = "$env:SystemRoot\System32\wscript.exe"
+  $s.Arguments = '"' + (Join-Path $PSScriptRoot 'jarvis-switch.vbs') + '" -Boot'
+  $s.WorkingDirectory = $root
+  $s.IconLocation = "$iconOn,0"
+  $s.Description = 'Starts the JARVIS "Hey Jarvis" listener at sign-in (unless the switch is OFF)'
+  $s.Save()
+}
+
 $isOn = (Get-Listener).Count -gt 0
+Set-StartupEntry
+
+if ($Boot) {
+  # Sign-in: listen for "Hey Jarvis" straight away — unless it was switched OFF.
+  if (Test-Path $flag) {
+    Set-Shortcut $false
+  } else {
+    Start-Listener
+    Set-Shortcut $true
+  }
+  return
+}
 
 if ($Install) {
   Set-Shortcut $isOn
