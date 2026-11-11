@@ -38,7 +38,34 @@ function Start-Jarvis([string]$text) {
 }
 function Starting { ((Get-Date) - $script:lastStart).TotalSeconds -lt 60 }
 
-[xml]$xaml = @'
+# --- colour ---------------------------------------------------------------------
+# The same colour as the interface: the theme chosen in setup
+# (~/.jarvis/profile.json) turns every colour here by the same hue as the
+# interface's CSS hue-rotate, with the same matrix, so the two match exactly.
+# The mute red stays red: it means "muted" whatever the theme.
+$profileFile = Join-Path $env:USERPROFILE '.jarvis\profile.json'
+$themeHues = @{ blue = 0; teal = -25; green = -60; purple = 70; crimson = 150; amber = 200 }
+function Get-Theme {
+  try { $t = ([IO.File]::ReadAllText($profileFile) | ConvertFrom-Json).theme } catch { $t = $null }
+  if ($t -and $themeHues.ContainsKey($t)) { $t } else { 'blue' }
+}
+$script:theme = Get-Theme
+$script:hue = $themeHues[$script:theme]
+function Turn-Colour([string]$hex) {
+  if ($script:hue -eq 0 -or $hex -ieq '#E0465A') { return $hex }
+  $h = $hex.TrimStart('#')
+  $a = ''
+  if ($h.Length -eq 8) { $a = $h.Substring(0, 2); $h = $h.Substring(2) }
+  $r = [Convert]::ToInt32($h.Substring(0, 2), 16); $g = [Convert]::ToInt32($h.Substring(2, 2), 16); $b = [Convert]::ToInt32($h.Substring(4, 2), 16)
+  $rad = $script:hue * [math]::PI / 180; $c = [math]::Cos($rad); $s = [math]::Sin($rad)
+  $nr = $r * (0.213 + $c * 0.787 - $s * 0.213) + $g * (0.715 - $c * 0.715 - $s * 0.715) + $b * (0.072 - $c * 0.072 + $s * 0.928)
+  $ng = $r * (0.213 - $c * 0.213 + $s * 0.143) + $g * (0.715 + $c * 0.285 + $s * 0.140) + $b * (0.072 - $c * 0.072 - $s * 0.283)
+  $nb = $r * (0.213 - $c * 0.213 - $s * 0.787) + $g * (0.715 - $c * 0.715 + $s * 0.715) + $b * (0.072 + $c * 0.928 + $s * 0.072)
+  $clamp = { param($v) [int][math]::Max(0, [math]::Min(255, [math]::Round($v))) }
+  '#{0}{1:X2}{2:X2}{3:X2}' -f $a, (& $clamp $nr), (& $clamp $ng), (& $clamp $nb)
+}
+
+$xamlText = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="JARVIS onscreen" Width="580" Height="192" WindowStyle="None"
@@ -125,11 +152,12 @@ function Starting { ((Get-Date) - $script:lastStart).TotalSeconds -lt 60 }
   </Grid>
 </Window>
 '@
+[xml]$xaml = [regex]::Replace($xamlText, '#(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{6})\b', { param($m) Turn-Colour $m.Value })
 
 $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
 $el = @{}
 foreach ($n in 'Header', 'Dot', 'Status', 'Close', 'Scroll', 'Heard', 'Said', 'Circle', 'Mic', 'Mute', 'MuteGlyph', 'MuteSlash', 'Attach', 'AttachRow', 'AttachList', 'AttachClear', 'Input', 'Send', 'Panel', 'Notch', 'NotchDot') { $el[$n] = $win.FindName($n) }
-$brush = { param($hex) (New-Object System.Windows.Media.BrushConverter).ConvertFromString($hex) }
+$brush = { param($hex) (New-Object System.Windows.Media.BrushConverter).ConvertFromString((Turn-Colour $hex)) }
 $micIdle = & $brush '#223FB6FF'
 $micLive = & $brush '#3FB6FF'
 $micIdleFg = & $brush '#3FB6FF'
@@ -432,7 +460,23 @@ $last = ''
 $timer = New-Object System.Windows.Threading.DispatcherTimer
 # 250 ms: still reads as live, at well under half the background work of 150.
 $timer.Interval = [TimeSpan]::FromMilliseconds(250)
+$script:themeTick = 0
 $timer.Add_Tick({
+  # A new colour chosen in the interface: every couple of seconds, look; if it
+  # changed, open a fresh popup in that colour, in the same place, and close
+  # this one. (The colours are baked in when the panel is built.)
+  $script:themeTick = ($script:themeTick + 1) % 8
+  if ($script:themeTick -eq 0 -and (Get-Theme) -ne $script:theme) {
+    $timer.Stop()
+    try {
+      $g = if ($script:collapsed -and $script:exp) { $script:exp } else { @{ left = $win.Left; top = $win.Top; width = $win.Width; height = $win.Height } }
+      $g | ConvertTo-Json -Compress | Set-Content -Path $saved -Encoding ascii
+    } catch {}
+    try { $script:single.ReleaseMutex() } catch {}
+    Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$PSCommandPath`"" -WindowStyle Hidden
+    $win.Close()
+    return
+  }
   try {
     $s = Invoke-RestMethod -Uri "$bridge/popup/state" -Headers (Auth) -TimeoutSec 1
     $phase = if ($labels.ContainsKey($s.phase)) { $labels[$s.phase] } else { $s.phase }
@@ -490,7 +534,9 @@ $clickTimer.Start()
 
 # The popup takes over from the main window: tuck that away so it's out of
 # sight while still running (and listening) in the background.
+# Not before the first-run setup is done: that screen is in the main window.
 $main = [JarvisPopup.Keys]::FindWindow([NullString]::Value, 'J.A.R.V.I.S.')
-if ($main -ne [IntPtr]::Zero) { [void][JarvisPopup.Keys]::ShowWindow($main, 6) }
+$setUp = Test-Path (Join-Path $env:USERPROFILE '.jarvis\profile.json')
+if ($setUp -and $main -ne [IntPtr]::Zero) { [void][JarvisPopup.Keys]::ShowWindow($main, 6) }
 
 [void]$win.ShowDialog()

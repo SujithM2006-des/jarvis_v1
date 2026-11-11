@@ -18,6 +18,9 @@ import {
   useStatus,
   type JarvisPhase,
   type StockPart,
+  assistantTitle,
+  openSetup,
+  useProfile,
 } from './kit'
 import './custom-layout.css'
 
@@ -655,6 +658,56 @@ const uptime = (s: number) => {
 
 // ------------------------------------------------------------------ layout
 
+/** The avatar at the foot of the rail, and its menu: customise the assistant. */
+function Me({ name, assistant }: { name: string; assistant: string }) {
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: Event) => {
+      if (!(e.target as Element).closest?.('.vg-me')) setOpen(false)
+    }
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', esc)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', esc)
+    }
+  }, [open])
+  return (
+    <div className="vg-me">
+      <button
+        type="button"
+        className={`vg-avatar ${open ? 'vg-avatar-on' : ''}`}
+        title={name}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {name[0].toUpperCase()}
+      </button>
+      {open && (
+        <div className="vg-me-menu" role="menu">
+          <div className="vg-me-head">
+            <b>{name}</b>
+            <small>{assistant}</small>
+          </div>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false)
+              openSetup()
+            }}
+          >
+            <Icon size={16}>{I.settings}</Icon>
+            Customize {assistant}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
 export default function CustomLayout() {
   useHide(HIDE)
   const now = useNow(1000)
@@ -717,6 +770,7 @@ export default function CustomLayout() {
               ? 'Offline'
               : `At your service, ${NAME}`
 
+  const profile = useProfile()
   const navItems = [
     { id: 'home', label: 'Home', icon: I.home },
     { id: 'apps', label: 'Apps', icon: I.apps, run: () => void ask('Which apps are open right now?') },
@@ -745,7 +799,7 @@ export default function CustomLayout() {
       <header className="vg-head">
         <div className="vg-logo"><i /><i /></div>
         <div className="vg-brand">
-          <strong>J.A.R.V.I.S.</strong>
+          <strong>{assistantTitle(profile)}</strong>
           <small>Personal AI Assistant</small>
         </div>
         <div className="vg-head-mid">
@@ -808,7 +862,7 @@ export default function CustomLayout() {
             <span className="vg-tip">{n.label}</span>
           </button>
         ))}
-        <span className="vg-avatar" title={NAME}>{NAME[0].toUpperCase()}</span>
+        <Me name={NAME} assistant={profile?.assistant || 'JARVIS'} />
       </nav>
 
       {/* Left column */}

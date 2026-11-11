@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Scene } from './scene/Scene'
 import { Hud } from './ui/Hud'
+import { Setup } from './ui/Setup'
 import { Boot } from './ui/Boot'
 import { Ignition } from './ui/Ignition'
 import { Diagnostics } from './ui/Diagnostics'
@@ -1112,6 +1113,7 @@ export default function App() {
         <CustomLayout />
       </LayoutBoundary>
       <Hud />
+      <Setup />
       <Boot />
       <Diagnostics />
       <Ignition onStart={() => void powerOn()} />

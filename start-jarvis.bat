@@ -17,10 +17,11 @@ rem The brain, unless it is already running.
 curl -s -o nul -m 2 http://127.0.0.1:8787/health || start "JARVIS brain" /min cmd /k "npm start -- --writes"
 
 rem Popup mode (%USERPROFILE%\.jarvis\popup-mode exists): the main window starts
-rem minimised and works in the background; the small popup is the face.
+rem minimised and works in the background; the small popup is the face. Not
+rem before the first-run setup is done, though: that screen is in the main window.
 set "SIZE=--start-maximized"
 set "SHOW="
-if exist "%USERPROFILE%\.jarvis\popup-mode" (
+if exist "%USERPROFILE%\.jarvis\popup-mode" if exist "%USERPROFILE%\.jarvis\profile.json" (
   set "SIZE="
   set "SHOW=/min"
 )

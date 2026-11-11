@@ -162,6 +162,67 @@ export function useMuted(): boolean {
   return m
 }
 
+/** This person's profile (setup screen): their name, the assistant's name, look and features. */
+export type Profile = {
+  configured: boolean
+  name: string
+  city: string
+  assistant: string
+  theme: string
+  features: Record<string, boolean>
+  /** Who made JARVIS. Fixed in the code; not part of anyone's settings. */
+  creator: string
+}
+
+const profileSubs = new Set<() => void>()
+let profileCache: Profile | null = null
+
+/** Read the profile again (after setup saves it). */
+export function refreshProfile() {
+  profileCache = null
+  profileSubs.forEach((f) => f())
+}
+
+/** The profile, or null until it has loaded. */
+export function useProfile(): Profile | null {
+  const [p, set] = useState<Profile | null>(profileCache)
+  const [bump, setBump] = useState(0)
+  useEffect(() => {
+    const f = () => setBump((b) => b + 1)
+    profileSubs.add(f)
+    return () => {
+      profileSubs.delete(f)
+    }
+  }, [])
+  useEffect(() => {
+    let alive = true
+    fetch(`${BRIDGE_HTTP_URL}/profile`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (alive && j) {
+          profileCache = j
+          set(j)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [bump])
+  return p
+}
+
+/** Open the setup screen (name, city, voice, look, features). */
+export function openSetup() {
+  window.dispatchEvent(new Event('jarvis-setup'))
+}
+
+/** The assistant's name as a title: "J.A.R.V.I.S." unless renamed. */
+export function assistantTitle(p: Profile | null): string {
+  const n = (p?.assistant || 'JARVIS').trim()
+  return n.toUpperCase() === 'JARVIS' ? 'J.A.R.V.I.S.' : n.toUpperCase()
+}
+
 /** A calendar event: a reminder, pending or already past. */
 export type CalEvent = { id: string; at: string; text: string; kind: string; repeat: string | null; done: boolean }
 

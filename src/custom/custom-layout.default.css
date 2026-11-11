@@ -1526,3 +1526,43 @@ body {
   animation: vg-err-in 0.25s ease-out;
 }
 @keyframes vg-err-in { from { opacity: 0; transform: translateY(4px); } }
+/* ---- avatar menu (foot of the rail) */
+/* At the foot of the rail, where the avatar always was. */
+.vg-me { position: relative; display: grid; place-items: center; margin-top: auto; }
+.vg-me .vg-avatar { margin-top: 0; }
+button.vg-avatar { border: 0; padding: 0; color: #fff; cursor: pointer; background: linear-gradient(135deg, var(--accent-2), #0d2f78); transition: box-shadow 0.2s, transform 0.2s; }
+button.vg-avatar:hover,
+button.vg-avatar.vg-avatar-on { box-shadow: 0 0 0 2px rgba(63, 182, 255, 0.7), 0 0 18px rgba(63, 182, 255, 0.5); transform: scale(1.05); }
+.vg-me-menu {
+  position: absolute;
+  left: calc(100% + 14px);
+  bottom: 0;
+  z-index: 30;
+  min-width: 220px;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid rgba(63, 182, 255, 0.35);
+  background: linear-gradient(160deg, rgba(8, 30, 60, 0.97), rgba(3, 12, 28, 0.97));
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55), 0 0 30px rgba(63, 182, 255, 0.15);
+  animation: vg-me-in 0.18s ease-out;
+}
+@keyframes vg-me-in { from { opacity: 0; transform: translateX(-6px); } }
+.vg-me-head { display: grid; padding: 8px 10px 10px; border-bottom: 1px solid rgba(63, 182, 255, 0.15); margin-bottom: 4px; }
+.vg-me-head b { color: #e6f4ff; font-size: 14px; }
+.vg-me-head small { color: #6f93b6; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+.vg-me-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #cfe6fb;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.vg-me-menu button:hover { background: rgba(63, 182, 255, 0.14); color: #fff; }

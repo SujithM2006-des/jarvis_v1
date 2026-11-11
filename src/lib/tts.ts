@@ -187,6 +187,25 @@ const clamp = (v: unknown, lo: number, hi: number, dflt: number) => {
 }
 
 /** Installed English voices, for choosing one. */
+/**
+ * Say a sample sentence in one voice, for the setup screen's voice list. Marked
+ * as his own speech while it plays, so the microphone's echo check ignores it
+ * rather than hearing it as something said to him. A new preview cuts off the
+ * one before.
+ */
+export function previewVoice(name: string, text: string, rate?: number) {
+  const v = speechSynthesis.getVoices().find((x) => x.name === name)
+  if (!v) return
+  speechSynthesis.cancel()
+  const u = new SpeechSynthesisUtterance(text)
+  u.voice = v
+  u.lang = v.lang
+  u.rate = rate ?? currentRate()
+  u.onstart = () => setSpeaking(text)
+  u.onend = u.onerror = () => setSpeaking('')
+  speechSynthesis.speak(u)
+}
+
 export function listVoices(): { name: string; lang: string }[] {
   return speechSynthesis
     .getVoices()
@@ -232,6 +251,11 @@ const SYSTEM_RATE = (() => {
   const v = Number(String(import.meta.env.VITE_VOICE_RATE ?? '').trim())
   return Number.isFinite(v) && v >= 0.5 && v <= 2 ? v : 1.1
 })()
+
+/** The speaking speed in effect now (1 = the voice's normal pace). */
+export function currentRate(): number {
+  return profile()?.rate ?? SYSTEM_RATE
+}
 
 /**
  * Rank installed voices by how close they are to the character: a British

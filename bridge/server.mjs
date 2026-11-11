@@ -28,6 +28,7 @@ import { status as telemetry } from './telemetry.mjs'
 import { spawn as spawnProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
+import { FEATURES, identityPrompt, readProfile, saveProfile } from './profile.mjs'
 import { fileURLToPath } from 'node:url'
 
 const SCRIPTS = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'scripts')
@@ -381,12 +382,14 @@ const ALLOW_WRITES =
  * respectively). The display itself is always on; it is how JARVIS shows
  * anything.
  */
-const DISABLED = new Set(
-  (process.env.JARVIS_DISABLE ?? '')
+const DISABLED = new Set([
+  ...(process.env.JARVIS_DISABLE ?? '')
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
-)
+  // And whatever this person switched off in setup (~/.jarvis/profile.json).
+  ...FEATURES.filter((f) => readProfile().features[f] === false),
+])
 
 /**
  * The orchestrator model. Override with JARVIS_MODEL to trade quality for pace
@@ -1190,6 +1193,30 @@ const handleRequest = async (req, res) => {
   // A command said right after "Hey Jarvis" while he was off, caught offline
   // by the wake listener (scripts/wake_listener.py). Handed to the window once
   // — only to our own page, only if fresh — and then deleted.
+  // The profile (setup screen). Saving one that switches features on or off
+  // restarts the bridge (exit 75; start.mjs brings it straight back), because
+  // the tool servers are chosen when it starts.
+  if (req.method === 'GET' && req.url === '/profile') {
+    res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    return res.end(JSON.stringify(readProfile()))
+  }
+  if (req.method === 'POST' && req.url === '/profile') {
+    const before = JSON.stringify(readProfile().features)
+    try {
+      const saved = saveProfile(await readJson(req))
+      const restart = JSON.stringify(saved.features) !== before
+      res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ...saved, restarting: restart }))
+      if (restart) {
+        console.log('[jarvis] features changed in setup - restarting the bridge')
+        setTimeout(() => process.exit(75), 400)
+      }
+      return
+    } catch (err) {
+      res.writeHead(400, { ...cors, 'content-type': 'application/json; charset=utf-8' })
+      return res.end(JSON.stringify({ error: err.message }))
+    }
+  }
   if (req.method === 'GET' && req.url === '/pending-command') {
     let text = ''
     const file = join(homedir(), '.jarvis', 'pending-command.json')
@@ -1998,7 +2025,9 @@ wss.on('connection', (socket) => {
       // keeps answers short enough to speak, and cuts cost per turn.
       // Plus the user's saved memory, read fresh for every new session.
       // And the recent conversation from the journal, so a restart is not amnesia.
-      systemPrompt: SYSTEM_PROMPT + memoryPrompt() + journalPrompt(),
+      // Who he is, who made him and who he works for come first — read per
+      // session, so a profile saved in setup applies from the next one.
+      systemPrompt: identityPrompt() + SYSTEM_PROMPT + memoryPrompt() + journalPrompt(),
       // Run from JARVIS's own workspace rather than the home directory. MCP
       // discovery does not depend on it — settingSources is empty and the
       // servers are passed in explicitly above — and file tools resolve

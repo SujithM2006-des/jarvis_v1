@@ -1,5 +1,7 @@
 # J.A.R.V.I.S. — a personal desktop assistant for Windows
 
+**Created by Sujith M.**
+
 A voice assistant with an Iron Man–style interface that actually runs your PC.
 Say **"Hey Jarvis"** — even when he's switched off — and he opens, listens, and
 gets on with it: opening apps and folders, finding and moving files, sending
@@ -77,8 +79,8 @@ your existing Claude Code login. No API key is required.
 ## Setup
 
 ```bat
-git clone https://github.com/SujithM2006-des/jarvis_v1.git
-cd jarvis_v1
+git clone https://github.com/SujithM2006-des/jarvisv2.git
+cd jarvisv2
 npm install
 ```
 
@@ -118,6 +120,28 @@ powershell -ExecutionPolicy Bypass -File scripts\jarvis-switch.ps1 -Install
 ```
 
 Double-click **"JARVIS - ON / OFF"** on the desktop to arm or disarm him.
+
+### Making it yours
+
+The first time JARVIS starts, a setup screen asks:
+
+- **Your name** — what he calls you — and **your city**, for weather when
+  Windows location is off.
+- **The assistant's name** — rename him if you like ("Friday"). The wake
+  phrase stays "Hey Jarvis".
+- **Voice** and **colour**.
+- **Features** — switch PC control, the browser, WhatsApp or the camera off if
+  you don't want them.
+
+Open it again any time from the **Profile** button in the sidebar. Your profile,
+memory and history stay on your own PC in `%USERPROFILE%\.jarvis` — nothing of
+yours is in this repository, and nothing of anyone else's is in your copy.
+
+For the brain, sign in to **your own** Claude Code account (`claude` in a
+terminal) — every copy uses its owner's account.
+
+JARVIS was created by **Sujith M**. That is fixed in the code
+(`bridge/profile.mjs`), not a setting, and he will always say so.
 
 ---
 
@@ -263,7 +287,10 @@ JARVIS can act on your PC, so the bridge keeps a tool gate (`bridge/policy.mjs`)
 
 ## Credits & licence
 
-MIT. Built on an open-source JARVIS voice-assistant project (bridge, reactor
-interface and voice pipeline), extended into a Windows personal assistant.
+Created by **Sujith M**. MIT licence — see `LICENSE`. Built on an open-source
+JARVIS voice-assistant project by Aditya Dewaskar (bridge, reactor interface and
+voice pipeline), extended by Sujith M into this Windows personal assistant.
+Under the MIT licence, copies and modified versions must keep the copyright
+notices in `LICENSE`, both of them.
 Music by Kevin MacLeod (incompetech.com), CC BY 4.0 — see
 `public/audio/CREDITS.md`. Wake word by [openWakeWord](https://github.com/dscripka/openWakeWord).

@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { ps } from './pc.mjs'
 import { forgetHistory, searchHistory } from './journal.mjs'
+import { readProfile } from './profile.mjs'
 
 /**
  * JARVIS as a personal assistant: long-term memory, reminders and timers,
@@ -287,6 +288,9 @@ export function upcoming(n = 4) {
  * Null when nothing says — the interface then says "sir".
  */
 export function userName() {
+  // The name given in setup wins; memory is for copies set up before it.
+  const set = readProfile().name
+  if (set) return set.split(/\s+/)[0]
   const lines = memoryLines()
   for (const l of lines) {
     const m = l.match(/\b(?:my|user'?s|the user'?s)\s+name\s+is\s+"?([A-Z][\w'-]+)/i)
@@ -306,7 +310,8 @@ function rememberedCity() {
     const m = l.match(/\b(?:city|live in|living in|based in|from)\b(?: is)?\s+([A-Z][\w .'-]{1,40})/i)
     if (m) return m[1].replace(/[.,;].*$/, '').trim()
   }
-  return null
+  // Then the city given in setup.
+  return readProfile().city || null
 }
 
 let weatherCache = { at: 0, data: null }
