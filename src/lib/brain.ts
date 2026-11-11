@@ -89,9 +89,19 @@ export function watchCircle(fn: (path: string) => void): void {
   if (usingBridge) bridge.watchCircle(fn)
 }
 
+/** The popup's mic button. Bridge only. */
+export function watchMic(fn: () => void): void {
+  if (usingBridge) bridge.watchMic(fn)
+}
+
 /** The window's phase, shown on the onscreen popup. Bridge only. */
 export function reportPhase(phase: string): void {
   if (usingBridge) bridge.reportPhase(phase)
+}
+
+/** The words as they are spoken, shown live on the onscreen popup. Bridge only. */
+export function reportPartial(text: string): void {
+  if (usingBridge) bridge.reportPartial(text)
 }
 
 /**

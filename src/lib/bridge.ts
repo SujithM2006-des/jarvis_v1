@@ -124,9 +124,20 @@ export function watchCircle(fn: (path: string) => void) {
   onCircle = fn
 }
 
+/** The popup's mic button was tapped. */
+let onMic: (() => void) | null = null
+export function watchMic(fn: () => void) {
+  onMic = fn
+}
+
 /** Tell the bridge the window's phase, which the onscreen popup displays. */
 export function reportPhase(phase: string) {
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'phase', phase }))
+}
+
+/** Live transcript while the user is still speaking, for the onscreen popup. */
+export function reportPartial(text: string) {
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'partial', text }))
 }
 
 /**
@@ -238,6 +249,8 @@ function dispatch(ws: WebSocket) {
       onUi?.(msg.op, (msg.args ?? {}) as Record<string, unknown>)
     } else if ((msg.type as string) === 'wake') {
       onRemoteWake?.()
+    } else if ((msg.type as string) === 'mic') {
+      onMic?.()
     } else if ((msg.type as string) === 'popup-ask') {
       const text = String((msg as unknown as { text?: unknown }).text ?? '').trim()
       if (text) onPopupAsk?.(text)

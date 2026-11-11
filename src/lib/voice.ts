@@ -345,6 +345,10 @@ function isEcho(heard: string, spoken: string): boolean {
 
   let hits = 0
   for (const w of content) if (mine.has(w)) hits++
+  // Talking over him puts both voices into one transcript. Two distinctive
+  // words he is not saying are the user, however much of him is mixed in —
+  // a ratio alone threw those interruptions away whenever he was loud.
+  if (content.length - hits >= 2) return false
   return hits / content.length >= 0.6
 }
 
@@ -664,6 +668,17 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
   let interim = ''
   let started = false
   let barged = false
+  /** What he was saying when the user cut in — stripped off the front of the
+   *  request, since the recogniser hears both voices at that moment. */
+  let bargeEcho = ''
+  /**
+   * Results already used. Endpointing on our own silence timer can take a
+   * phrase while Chrome still holds it as an interim result; when Chrome then
+   * finalises that same result it arrives again as "new" text, and the request
+   * went out doubled ("open popup open popup"). Indices below this are skipped.
+   */
+  let consumed = 0
+  let seen = 0
   let lastWake = 0
   let lastAlive = Date.now()
   let silenceTimer: ReturnType<typeof setTimeout> | null = null
@@ -694,10 +709,22 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
     interim = ''
     started = false
     barged = false
+    consumed = seen
+  }
+
+  /** Drop his own words from the front of an interruption. */
+  const stripEcho = (text: string, echo: string) => {
+    if (!echo) return text
+    const mine = new Set(norm(echo).split(' '))
+    const words = text.split(/\s+/)
+    let i = 0
+    while (i < words.length && !OVERRIDE.test(words[i]) && mine.has(norm(words[i]))) i++
+    return i < words.length ? words.slice(i).join(' ') : text
   }
 
   const emit = () => {
-    const text = `${settled} ${interim}`.replace(/\s+/g, ' ').trim()
+    const text = stripEcho(`${settled} ${interim}`.replace(/\s+/g, ' ').trim(), bargeEcho)
+    bargeEcho = ''
     const mode = h.mode()
     reset()
     if (!text || mode === 'deaf') return
@@ -743,7 +770,8 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
     }
     let fresh = ''
     interim = ''
-    for (let i = e.resultIndex; i < e.results.length; i++) {
+    seen = e.results.length
+    for (let i = Math.max(e.resultIndex, consumed); i < e.results.length; i++) {
       const chunk = e.results[i][0].transcript as string
       if (e.results[i].isFinal) fresh += chunk
       else interim += chunk
@@ -787,6 +815,7 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
           const since = speakingSince()
           if (since && Date.now() - since < SELF_GUARD_MS) {
             diag.selfGuarded++
+            settled = '' // his voice, not the start of a request
             return
           }
           // Two words before this engine believes an interruption. The energy
@@ -801,7 +830,11 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
         }
       }
       started = true
-      if (mode === 'guard') barged = true
+      if (mode === 'guard') {
+        barged = true
+        bargeEcho = speakingNow()
+        if (bargeEcho) vlog(`barge-in over his voice on "${full.slice(-60)}"`)
+      }
       h.onSpeechStart()
     }
     diag.dropped = ''
@@ -819,6 +852,9 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
     rec.interimResults = true
     rec.lang = SPEECH_LANG
     rec.onstart = () => {
+      // A fresh session numbers its results from zero again.
+      consumed = 0
+      seen = 0
       running = true
       diag.running = true
       diag.sessions++

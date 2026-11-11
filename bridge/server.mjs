@@ -1036,6 +1036,12 @@ const handleRequest = async (req, res) => {
     res.writeHead(sent ? 200 : 409, { ...cors, 'content-type': 'application/json' })
     return res.end(JSON.stringify({ sent }))
   }
+  // The popup's mic button: listen now, or — if already listening — standby.
+  if (req.method === 'POST' && req.url === '/popup/mic') {
+    const sent = broadcast({ type: 'mic' })
+    res.writeHead(sent ? 200 : 409, { ...cors, 'content-type': 'application/json; charset=utf-8' })
+    return res.end(JSON.stringify({ sent }))
+  }
   if (req.method === 'POST' && req.url === '/circle') {
     const started = startCircle()
     res.writeHead(200, { ...cors, 'content-type': 'application/json' })
@@ -1932,7 +1938,11 @@ wss.on('connection', (socket) => {
       const text = msg.text
       const id = typeof msg.id === 'string' ? msg.id : null
       console.log(`[jarvis] heard: ${text.replace(/\s+/g, ' ').slice(0, 300)}`)
-      popupState.heard = text.replace(/^\[.*?\]\s*/, '').slice(0, 300)
+      // A Circle to Search request is an internal instruction with a file
+      // path in it; the popup shows a tidy label instead.
+      popupState.heard = /^I've circled something on my screen/.test(text)
+        ? '◯ Circle to search'
+        : text.replace(/^\[.*?\]\s*/, '').slice(0, 300)
       popupState.said = ''
       popupState.tool = ''
       void settling.then(() => {
@@ -1950,6 +1960,14 @@ wss.on('connection', (socket) => {
     // The window's phase (listening, thinking, speaking …), for the popup.
     if (msg.type === 'phase' && typeof msg.phase === 'string') {
       popupState.phase = msg.phase.slice(0, 20)
+    }
+
+    // Words still being spoken: shown on the popup straight away, replacing
+    // the previous exchange, before the request itself is sent.
+    if (msg.type === 'partial' && typeof msg.text === 'string' && msg.text.trim()) {
+      popupState.heard = msg.text.replace(/\s+/g, ' ').trim().slice(-300)
+      popupState.said = ''
+      popupState.tool = ''
     }
 
     if (msg.type === 'reply' && typeof msg.id === 'string') {

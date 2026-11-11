@@ -27,8 +27,10 @@ import {
   watchAnnounce,
   watchRemoteWake,
   watchPopupAsk,
+  watchMic,
   watchCircle,
   reportPhase,
+  reportPartial,
   watchConnection,
   connectedLabels,
   usingBridge,
@@ -445,7 +447,14 @@ export default function App() {
     // The first half of this request was sent too early (see onSpeechStart):
     // send the whole thing together instead of answering half a sentence.
     if (carryOver.current) {
-      said = `${carryOver.current} ${said}`
+      const carry = carryOver.current
+      const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]+/g, '').replace(/\s+/g, ' ').trim()
+      // The recogniser often re-delivers the first half along with the rest;
+      // joining then would send the request twice over.
+      const k = key(said)
+      const kc = key(carry)
+      if (!k.startsWith(kc.slice(0, 40)) && !kc.includes(k)) said = `${carry} ${said}`
+      else if (kc.includes(k)) said = carry
       carryOver.current = ''
       console.warn(`[voice] joined a cut-off request: "${said.slice(0, 80)}"`)
     }
@@ -483,6 +492,9 @@ export default function App() {
 
   const onPartial = (text: string) => {
     store.getState().setCaption(text)
+    // Mirror the words onto the onscreen popup as they are spoken.
+    const t = text.trim()
+    if (t && t !== '…' && store.getState().phase === 'listening') reportPartial(t)
   }
 
   const onVoiceError = (message: string) => {
@@ -611,6 +623,25 @@ export default function App() {
       void respond(text)
     }
     watchPopupAsk(fromDesk)
+
+    // The popup's mic button: a toggle. Listening already → standby;
+    // otherwise listen now, cutting through anything he is saying or doing.
+    watchMic(() => {
+      const phase = store.getState().phase
+      if (phase === 'offline' || phase === 'boot') return
+      console.warn(`[voice] popup mic tapped (phase ${phase})`)
+      if (phase === 'listening' || phase === 'waking') {
+        standBy()
+        return
+      }
+      if (phase === 'thinking' || phase === 'tooling' || phase === 'speaking') {
+        silence()
+        interrupt()
+        store.getState().setActiveTool(null)
+      }
+      lastWakeAt.current = 0 // a tap is deliberate: never swallowed as a duplicate wake
+      onWake('')
+    })
 
     // Circle to Search: the user circled part of the screen; the crop is a
     // PNG in the temp folder, which his file tools can read and see.
