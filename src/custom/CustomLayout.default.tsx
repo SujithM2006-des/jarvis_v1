@@ -22,6 +22,7 @@ import {
   openSetup,
   useProfile,
 } from './kit'
+import { Orb, orbInfo } from './orbs'
 import './custom-layout.css'
 
 /*
@@ -416,62 +417,18 @@ function Wave({ level, bars = 27, idle = 0.1, className = '' }: { level: number;
   )
 }
 
-/** The reactor: layered rings, live to his phase. */
-function Reactor({ phase, level, line }: { phase: JarvisPhase; level: number; line: string }) {
+/** The centre: the orb chosen in setup, live to his phase, with his name and line. */
+function Reactor({ phase, level, line, orb, title }: { phase: JarvisPhase; level: number; line: string; orb: string; title: string }) {
   const voiced = phase === 'speaking' || phase === 'listening' || phase === 'waking'
+  const state = (phaseLabel[phase] ?? 'Online').toUpperCase()
+  const legend = `${title}  ·  NEURAL CORE  ·  ${state}  ·  VOICE LINK  ·  ${title}  ·  NEURAL CORE  ·  ${state}  ·  VOICE LINK  ·`
   return (
-    <div className={`vg-reactor vg-ph-${phase}`}>
+    <div className={`vg-reactor vg-ph-${phase} vg-orb-${orbInfo(orb).id} ${orbInfo(orb).textBelow ? 'vg-orb-below' : ''}`}>
       <div className="vg-halo" />
-      <svg viewBox="0 0 400 400" className="vg-r-svg">
-        <defs>
-          <linearGradient id="vg-ring-g" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stopColor="var(--hi)" />
-            <stop offset="0.5" stopColor="var(--core)" />
-            <stop offset="1" stopColor="var(--deep)" />
-          </linearGradient>
-          <radialGradient id="vg-disk-g" cx="50%" cy="40%" r="62%">
-            <stop offset="0" stopColor="#0f2f66" />
-            <stop offset="0.6" stopColor="#051330" />
-            <stop offset="1" stopColor="#020a1a" />
-          </radialGradient>
-          <path id="vg-orbit-path" d="M200,200 m-208,0 a208,208 0 1,1 416,0 a208,208 0 1,1 -416,0" />
-        </defs>
-        {/* An orbiting legend, slowly turning — the core's own readout. */}
-        <g className="vg-spin-text">
-          <text className="vg-orbit-text">
-            <textPath href="#vg-orbit-path">
-              {`J.A.R.V.I.S  ·  NEURAL CORE  ·  ${(phaseLabel[phase] ?? 'Online').toUpperCase()}  ·  VOICE LINK  ·  J.A.R.V.I.S  ·  NEURAL CORE  ·  ${(phaseLabel[phase] ?? 'Online').toUpperCase()}  ·  VOICE LINK  ·`}
-            </textPath>
-          </text>
-        </g>
-        <g className="vg-spin-slow">
-          {Array.from({ length: 90 }, (_, i) => {
-            const a = (i / 90) * Math.PI * 2
-            const long = i % 15 === 0
-            return (
-              <line
-                key={i}
-                x1={200 + Math.cos(a) * 196}
-                y1={200 + Math.sin(a) * 196}
-                x2={200 + Math.cos(a) * (long ? 184 : 190)}
-                y2={200 + Math.sin(a) * (long ? 184 : 190)}
-                className={long ? 'vg-tick-l' : 'vg-tick'}
-              />
-            )
-          })}
-        </g>
-        <g className="vg-spin-a"><circle cx="200" cy="200" r="176" className="vg-seg" strokeDasharray="120 30 20 30 70 50" /></g>
-        <g className="vg-spin-b"><circle cx="200" cy="200" r="166" className="vg-dots" strokeDasharray="1.5 9" /></g>
-        <circle cx="200" cy="200" r="150" className="vg-ring-bloom" />
-        <circle cx="200" cy="200" r="150" className="vg-ring" />
-        <g className="vg-spin-c"><circle cx="200" cy="200" r="150" className="vg-ring-hot" strokeDasharray="70 873" /></g>
-        <circle cx="200" cy="200" r="136" className="vg-ring-in" />
-        <circle cx="200" cy="200" r="128" fill="url(#vg-disk-g)" />
-        <g className="vg-spin-d"><circle cx="200" cy="200" r="120" className="vg-inner-dash" strokeDasharray="30 12" /></g>
-      </svg>
+      <Orb id={orb} phase={phase} level={level} legend={legend} className="vg-r-svg" />
       <div className="vg-r-text">
         <span className="vg-r-kicker">{phaseLabel[phase] ?? 'Online'}</span>
-        <h1>J.A.R.V.I.S.</h1>
+        <h1>{title}</h1>
         <p>{line}</p>
         <Wave level={voiced ? level : 0} idle={voiced ? 0.22 : 0.1} />
       </div>
@@ -904,7 +861,7 @@ export default function CustomLayout() {
 
       {/* Centre */}
       <main className="vg-centre">
-        <Reactor phase={phase} level={level} line={line} />
+        <Reactor phase={phase} level={level} line={line} orb={profile?.orb ?? 'reactor'} title={assistantTitle(profile)} />
         <AgentTrace steps={trace} />
         <Conversation idle={phase === 'dormant'} />
       </main>

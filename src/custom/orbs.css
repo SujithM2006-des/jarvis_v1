@@ -1,0 +1,101 @@
+/* The centre orbs (src/custom/orbs.tsx). Colours come from --core, --hi and
+   --deep, set by the layout (and by the setup previews). */
+
+.orb { overflow: visible; }
+/* Outside the layout (the setup screen's previews) the colours are set here. */
+.orb-preview { --core: #2a8cff; --hi: #a6e4ff; --deep: #1546d6; }
+/* Only what moves turns or swells about the centre. (Not the tilted orbits:
+   their rotate(a 200 200) already names the centre.) */
+.orb-spin,
+.orb-core,
+.orb-breathe,
+.orb-heart,
+.orb-bars { transform-box: view-box; transform-origin: 200px 200px; }
+
+/* Turning, at a few speeds; .orb-rev turns the other way. */
+.orb-spin { animation: orb-turn linear infinite; }
+.orb-s20 { animation-duration: 20s; }
+.orb-s30 { animation-duration: 30s; }
+.orb-s40 { animation-duration: 40s; }
+.orb-s60 { animation-duration: 60s; }
+.orb-s90 { animation-duration: 90s; }
+.orb-s120 { animation-duration: 120s; }
+.orb-rev { animation-direction: reverse; }
+@keyframes orb-turn { to { transform: rotate(360deg); } }
+
+.orb-breathe { animation: orb-breathe 4.5s ease-in-out infinite; }
+@keyframes orb-breathe { 50% { opacity: 0.65; transform: scale(0.96); } }
+
+/* Faster while he is busy. */
+.orb-ph-thinking .orb-spin,
+.orb-ph-tooling .orb-spin { animation-duration: 8s; }
+
+/* ---- shared strokes */
+.orb-arc { fill: none; stroke: var(--core); stroke-width: 7; stroke-opacity: 0.35; stroke-linecap: round; }
+.orb-thin { fill: none; stroke: var(--hi); stroke-width: 1; stroke-opacity: 0.35; }
+.orb-ring { fill: none; stroke: var(--core); stroke-width: 5; filter: drop-shadow(0 0 6px var(--core)); }
+.orb-ring-hot { fill: none; stroke: #fff; stroke-width: 5; stroke-linecap: round; filter: drop-shadow(0 0 8px var(--hi)); }
+
+/* ---- atom */
+.orb-rays line { stroke: var(--hi); stroke-width: 0.5; stroke-opacity: 0.12; }
+.orb-ribbon { fill: none; stroke: var(--core); stroke-width: 12; stroke-opacity: 0.22; }
+.orb-runner {
+  fill: none;
+  stroke: var(--hi);
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-dasharray: 160 1100;
+  filter: drop-shadow(0 0 6px var(--core));
+  animation: orb-run linear infinite;
+}
+@keyframes orb-run { to { stroke-dashoffset: -1260; } }
+.orb-inner { fill: none; stroke: var(--core); stroke-width: 7; stroke-opacity: 0.75; filter: drop-shadow(0 0 8px var(--core)); }
+.orb-inner-hot { fill: none; stroke: #e9fbff; stroke-width: 7; stroke-linecap: round; }
+.orb-spark { fill: var(--hi); animation: orb-twinkle 3.2s ease-in-out infinite; }
+@keyframes orb-twinkle { 50% { opacity: 0.15; } }
+.orb-glass { fill: none; stroke: #e9fbff; stroke-width: 1.2; stroke-opacity: 0.6; }
+.orb-core { transform: scale(calc(1 + var(--lv, 0) * 0.35)); transition: transform 0.08s linear; }
+.orb-heart { filter: drop-shadow(0 0 10px #fff) drop-shadow(0 0 22px var(--hi)); animation: orb-beat 2.4s ease-in-out infinite; }
+@keyframes orb-beat { 50% { transform: scale(0.88); } }
+.orb-ph-speaking .orb-heart,
+.orb-ph-listening .orb-heart { animation-duration: 0.9s; }
+
+/* ---- nebula */
+.orb-shell { fill: none; stroke: var(--hi); stroke-width: 0.8; stroke-opacity: 0.25; stroke-dasharray: 2 5; }
+.orb-trail { fill: none; stroke: var(--core); stroke-width: 0.8; stroke-opacity: 0.25; }
+.orb-stream {
+  fill: none;
+  stroke: var(--hi);
+  stroke-linecap: round;
+  stroke-dasharray: 0.1 13;
+  filter: drop-shadow(0 0 3px var(--core));
+  animation: orb-stream linear infinite;
+}
+@keyframes orb-stream { to { stroke-dashoffset: -131; } }
+
+/* ---- pulse */
+.orb-bars { transition: transform 0.08s linear; }
+.orb-bar {
+  fill: var(--hi);
+  opacity: 0.85;
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: orb-bar 1.6s ease-in-out infinite;
+}
+@keyframes orb-bar {
+  0%, 100% { transform: scaleY(calc(0.25 * var(--amp, 0.4) + 0.1)); }
+  50% { transform: scaleY(calc(1 * var(--amp, 0.4) + 0.1)); }
+}
+
+/* ---- prism */
+.orb-hex-a { fill: none; stroke: var(--core); stroke-width: 3; stroke-opacity: 0.55; }
+.orb-hex-b { fill: none; stroke: var(--hi); stroke-width: 1.5; stroke-opacity: 0.5; }
+.orb-hex-c { fill: none; stroke: var(--core); stroke-width: 1; stroke-opacity: 0.3; }
+.orb-grid { stroke: var(--core); stroke-width: 0.8; stroke-opacity: 0.25; }
+.orb-node { fill: var(--hi); filter: drop-shadow(0 0 5px var(--core)); }
+.orb-hex-glow { fill: none; stroke: var(--core); stroke-width: 14; stroke-opacity: 0.25; filter: blur(4px); }
+.orb-hex-main { fill: none; stroke: var(--hi); stroke-width: 4; filter: drop-shadow(0 0 8px var(--core)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .orb * { animation: none !important; }
+}

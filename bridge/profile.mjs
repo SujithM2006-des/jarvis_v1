@@ -26,12 +26,16 @@ export const FEATURES = ['whatsapp', 'browser', 'camera', 'pc']
 /** Colour presets for the interface (a hue turn from the stock blue). */
 export const THEMES = { blue: 0, purple: 70, crimson: 150, amber: 200, green: -60, teal: -25 }
 
+/** Centre orb designs (src/custom/orbs.tsx). */
+export const ORBS = ['reactor', 'atom', 'nebula', 'pulse', 'prism']
+
 const DEFAULTS = {
   name: '',
   city: '',
   assistant: 'JARVIS',
   features: Object.fromEntries(FEATURES.map((f) => [f, true])),
   theme: 'blue',
+  orb: 'reactor',
 }
 
 /** The saved profile, with defaults filled in; `configured` is false until setup has run. */
@@ -73,7 +77,8 @@ export function saveProfile(input) {
   if (!/^[\p{L}\p{N} .'-]+$/u.test(assistant)) throw new Error('The assistant name can only have letters, numbers and spaces.')
   const theme = Object.hasOwn(THEMES, input?.theme) ? input.theme : 'blue'
   const features = Object.fromEntries(FEATURES.map((f) => [f, input?.features?.[f] !== false]))
-  const out = { name, city: nameCase(clean(input?.city, 60)), assistant, features, theme }
+  const orb = ORBS.includes(input?.orb) ? input.orb : 'reactor'
+  const out = { name, city: nameCase(clean(input?.city, 60)), assistant, features, theme, orb }
   mkdirSync(join(homedir(), '.jarvis'), { recursive: true })
   writeFileSync(FILE, JSON.stringify(out, null, 2))
   return readProfile()

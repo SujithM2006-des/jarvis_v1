@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react'
 import { Scene } from './scene/Scene'
 import { Hud } from './ui/Hud'
 import { Setup } from './ui/Setup'
-import { Boot } from './ui/Boot'
 import { Ignition } from './ui/Ignition'
 import { Diagnostics } from './ui/Diagnostics'
 import { useStore } from './store'
@@ -801,13 +800,25 @@ export default function App() {
     // In bridge mode the conversation lives in the agent session, which is tied
     // to the socket — so a drop silently wipes his memory while the transcript
     // on screen still shows it. Better to say so than to let him quietly forget.
+    //
+    // A blip — the bridge restarting to apply new settings, a few seconds at
+    // most — reconnects quietly; only a drop that lasts is shown, and it clears
+    // itself once he is back. (Recent conversation comes back from his journal,
+    // so the old "was not kept" warning no longer holds.)
+    let lostTimer = 0
+    let shown = false
+    const LOST_MSG = 'Reconnecting to the brain…'
     watchConnection((state) => {
       if (state === 'lost') {
-        store.getState().setError('Bridge connection lost — reconnecting.')
+        window.clearTimeout(lostTimer)
+        lostTimer = window.setTimeout(() => {
+          shown = true
+          store.getState().setError(LOST_MSG)
+        }, 8000)
       } else if (state === 'reconnected') {
-        store
-          .getState()
-          .setError('Bridge reconnected. The previous conversation was not kept.')
+        window.clearTimeout(lostTimer)
+        if (shown && store.getState().error === LOST_MSG) store.getState().setError(null)
+        shown = false
       }
     })
     const warming = warm().catch((err: Error) => s.setError(err.message))
@@ -838,15 +849,9 @@ export default function App() {
       }, 200)
     }
 
-    // Long enough for the four-beat start-up sequence in Boot.tsx to play —
-    // status bar, rings, suit schematic, reactor power-up — before the live
-    // interface takes over. Kept a touch under the boot cue so the music is
-    // still rising as the reactor lands.
-    // Arriving from the loading screen (scripts/splash.html) the user has
-    // already watched a start-up; a second one would be a stall. Straight to
-    // the interface (Boot.tsx draws nothing in this case either).
-    const fromSplash = new URL(window.location.href).searchParams.get('from') === 'splash'
-    await new Promise((r) => setTimeout(r, fromSplash ? 0 : 9200)) // boot sequence
+    // Straight to the interface. The old in-page boot animation (status bar,
+    // suit figure, arc reactor) was removed on request; the loading screen
+    // (scripts/splash.html) is the only start-up shown.
     await warming
     store.getState().setConnected(connectedLabels())
 
@@ -1114,7 +1119,6 @@ export default function App() {
       </LayoutBoundary>
       <Hud />
       <Setup />
-      <Boot />
       <Diagnostics />
       <Ignition onStart={() => void powerOn()} />
     </>

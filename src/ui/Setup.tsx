@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { BRIDGE_HTTP_URL } from '../config'
 import { currentRate, currentVoiceName, listVoices, previewVoice, setVoiceProfile } from '../lib/tts'
 import { refreshProfile, useProfile, type Profile } from '../custom/kit'
+import { ORBS, Orb } from '../custom/orbs'
 import './setup.css'
 
 /**
@@ -205,6 +206,28 @@ export function Setup() {
               <button type="button" className="su-ghost su-reset" onClick={() => setRate(1)}>
                 Normal
               </button>
+            </div>
+          </div>
+
+          <div className="su-field">
+            <span>Centre orb</span>
+            <div className="su-orbs" role="radiogroup" aria-label="Centre orb">
+              {ORBS.map((o) => {
+                const on = (form.orb || 'reactor') === o.id
+                return (
+                  <button
+                    key={o.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    className={`su-orb ${on ? 'su-on' : ''}`}
+                    onClick={() => set({ orb: o.id })}
+                  >
+                    <Orb id={o.id} phase="dormant" level={0} className="orb-preview" />
+                    <b>{o.label}</b>
+                  </button>
+                )
+              })}
             </div>
           </div>
 

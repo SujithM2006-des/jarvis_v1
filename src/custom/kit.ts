@@ -169,6 +169,8 @@ export type Profile = {
   city: string
   assistant: string
   theme: string
+  /** The centre orb's design (see orbs.tsx). */
+  orb: string
   features: Record<string, boolean>
   /** Who made JARVIS. Fixed in the code; not part of anyone's settings. */
   creator: string

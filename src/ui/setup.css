@@ -6,7 +6,9 @@
 html[data-theme-hue] #root { filter: hue-rotate(var(--theme-hue)); }
 html[data-theme-hue] #root img,
 html[data-theme-hue] #root video { filter: hue-rotate(calc(-1 * var(--theme-hue))); }
-html[data-theme-hue] #root .su-backdrop { filter: hue-rotate(calc(-1 * var(--theme-hue))); }
+/* The setup screen takes the interface colour too (it is inside #root); only
+   the colour swatches are turned back, so each still shows its own colour. */
+html[data-theme-hue] #root .su-theme i { filter: hue-rotate(calc(-1 * var(--theme-hue))); }
 
 .su-backdrop {
   position: fixed;
@@ -192,3 +194,31 @@ html[data-theme-hue] #root .su-backdrop { filter: hue-rotate(calc(-1 * var(--the
 .su-rate { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .su-rate input[type='range'] { flex: 1; min-width: 160px; accent-color: #3fb6ff; height: 22px; cursor: pointer; }
 .su-rate .su-reset { height: 30px; padding: 0 12px; font-size: 13px; }
+/* Centre orb picker: live previews. */
+.su-orbs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 560px) { .su-orbs { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.su-orb {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 10px 6px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(63, 182, 255, 0.18);
+  background: rgba(2, 14, 32, 0.6);
+  color: #bcd8f2;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.su-orb:hover { border-color: rgba(63, 182, 255, 0.45); }
+.su-orb svg { width: 100%; max-width: 78px; aspect-ratio: 1; }
+.su-orb b { font-size: 12.5px; font-weight: 600; }
+.su-orb.su-on { border-color: #3fb6ff; background: rgba(10, 44, 84, 0.65); box-shadow: 0 0 0 1px #3fb6ff inset; color: #fff; }
+/* Warnings stay red whatever the colour theme: turned back like the swatches. */
+html[data-theme-hue] #root .vg-ask-error,
+html[data-theme-hue] #root .su-error,
+html[data-theme-hue] #root .hud .error,
+html[data-theme-hue] #root .vg-pill-muted,
+html[data-theme-hue] #root .vg-sc-btn.vg-bad,
+html[data-theme-hue] #root .vg-mute-on,
+html[data-theme-hue] #root .vg-cal-error { filter: hue-rotate(calc(-1 * var(--theme-hue))); }

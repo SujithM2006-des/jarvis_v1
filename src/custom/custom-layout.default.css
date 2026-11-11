@@ -40,9 +40,8 @@ body {
   pointer-events: none;
 }
 /* Listening keeps the same blue as idle: no colour change (by request). */
-.vg-root.vg-ph-thinking { --core: #6f7dff; --hi: #d0d5ff; --deep: #3b3fd0; }
-.vg-root.vg-ph-tooling { --core: #ffa53a; --hi: #ffe0b5; --deep: #d56a00; }
-.vg-root.vg-ph-offline, .vg-root.vg-ph-boot { --core: #48597a; --hi: #9aabc4; --deep: #2c3a55; }
+/* Thinking, working, speaking: always the colour the user picked (no phase colours). */
+.vg-root.vg-ph-offline { --core: #48597a; --hi: #9aabc4; --deep: #2c3a55; }
 .vg-root button,
 .vg-root input,
 .vg-panel,
@@ -240,8 +239,8 @@ body {
 }
 .vg-pill-listening, .vg-pill-waking { color: #9fcbff; border-color: rgba(42, 140, 255, 0.6); background: rgba(20, 60, 150, 0.38); }
 .vg-pill-speaking { color: #cde9ff; border-color: rgba(120, 190, 255, 0.5); background: rgba(30, 80, 170, 0.32); }
-.vg-pill-thinking { color: #c1c8ff; border-color: rgba(130, 140, 255, 0.5); background: rgba(45, 45, 130, 0.35); }
-.vg-pill-tooling { color: #ffd291; border-color: rgba(255, 175, 70, 0.5); background: rgba(110, 66, 10, 0.35); }
+.vg-pill-thinking { color: #cde9ff; border-color: rgba(120, 190, 255, 0.5); background: rgba(30, 80, 170, 0.32); }
+.vg-pill-tooling { color: #cde9ff; border-color: rgba(120, 190, 255, 0.5); background: rgba(30, 80, 170, 0.32); }
 .vg-pill-offline { color: #ffa0a0; border-color: rgba(255, 110, 110, 0.45); background: rgba(110, 20, 20, 0.35); }
 .vg-pill-muted {
   color: #ffb0b0 !important;
@@ -1347,8 +1346,8 @@ body {
   color: var(--ink-3);
 }
 .vg-step > i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-.vg-step-think > i { background: #8fa0ff; }
-.vg-step-tool > i { background: #ffb85c; }
+.vg-step-think > i { background: #7fd0ff; }
+.vg-step-tool > i { background: #7fd0ff; }
 .vg-step-speak > i { background: #7fd0ff; }
 .vg-step-done > i { background: #5fe3a1; }
 .vg-step-live {
@@ -1566,3 +1565,10 @@ button.vg-avatar.vg-avatar-on { box-shadow: 0 0 0 2px rgba(63, 182, 255, 0.7), 0
   cursor: pointer;
 }
 .vg-me-menu button:hover { background: rgba(63, 182, 255, 0.14); color: #fff; }
+/* ---- orbs: when the orb has a bright heart (Atom, Nebula) the name and line
+   sit below it instead of on top. */
+.vg-orb-below .vg-r-svg { inset: 0 9% 17% 9%; }
+.vg-orb-below .vg-halo { inset: -8% -2% 6% -2%; }
+.vg-orb-below .vg-r-text { inset: auto 0 -3% 0; }
+.vg-orb-below .vg-r-text h1 { font-size: clamp(18px, 3.2vh, 32px); }
+.vg-orb-below .vg-r-text p { margin: 0.5vh 0 0.8vh; }
