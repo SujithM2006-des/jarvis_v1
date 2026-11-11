@@ -73,10 +73,13 @@ New-Icon $iconOff '#ff4d4d' $false
 # --- the desktop shortcut ------------------------------------------------------
 
 function Set-Shortcut([bool]$on) {
+  # In its own folder on the desktop; any copy left loose on the desktop goes.
   $desktop = [Environment]::GetFolderPath('Desktop')
-  Get-ChildItem $desktop -Filter 'JARVIS - O*.lnk' -ErrorAction SilentlyContinue | Remove-Item -Force
+  $folder = Join-Path $desktop 'JARVIS Kill Switch'
+  New-Item -ItemType Directory -Force -Path $folder | Out-Null
+  Get-ChildItem $desktop, $folder -Filter 'JARVIS - O*.lnk' -ErrorAction SilentlyContinue | Remove-Item -Force
   $name = if ($on) { 'JARVIS - ON.lnk' } else { 'JARVIS - OFF.lnk' }
-  $s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desktop $name))
+  $s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $folder $name))
   $s.TargetPath = "$env:SystemRoot\System32\wscript.exe"
   $s.Arguments = '"' + (Join-Path $PSScriptRoot 'jarvis-switch.vbs') + '"'
   $s.WorkingDirectory = $root

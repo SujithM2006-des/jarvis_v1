@@ -27,10 +27,13 @@ $iconOn = Join-Path $dir 'icons\jarvis-on.ico'
 $iconOff = Join-Path $dir 'icons\jarvis-off.ico'
 
 function Set-Shortcut([bool]$on) {
+  # In its own folder on the desktop; any copy left loose on the desktop goes.
   $desktop = [Environment]::GetFolderPath('Desktop')
-  Get-ChildItem $desktop -Filter 'JARVIS Popup - O*.lnk' -ErrorAction SilentlyContinue | Remove-Item -Force
+  $folder = Join-Path $desktop 'Popup Kill Switch'
+  New-Item -ItemType Directory -Force -Path $folder | Out-Null
+  Get-ChildItem $desktop, $folder -Filter 'JARVIS Popup - O*.lnk' -ErrorAction SilentlyContinue | Remove-Item -Force
   $name = if ($on) { 'JARVIS Popup - ON.lnk' } else { 'JARVIS Popup - OFF.lnk' }
-  $s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desktop $name))
+  $s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $folder $name))
   $s.TargetPath = "$env:SystemRoot\System32\wscript.exe"
   $s.Arguments = '"' + (Join-Path $PSScriptRoot 'popup-switch.vbs') + '"'
   $s.WorkingDirectory = $root
