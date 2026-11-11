@@ -9,6 +9,10 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
 $bridge = 'http://127.0.0.1:8787'
+# The bridge's local key (~/.jarvis/bridge-token), made fresh each time JARVIS
+# starts: read per request, so the popup keeps working across his restarts.
+$tokenFile = Join-Path $env:USERPROFILE '.jarvis\bridge-token'
+function Auth { try { @{ 'x-jarvis-token' = ([IO.File]::ReadAllText($tokenFile)).Trim() } } catch { @{} } }
 
 [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -210,7 +214,7 @@ function Post([string]$path, $body, [int]$timeout = 3) {
     $json = if ($body) { $body | ConvertTo-Json -Compress } else { '{}' }
     # UTF-8 bytes: a file or folder name with non-ASCII characters must survive.
     $bytes = [Text.Encoding]::UTF8.GetBytes($json)
-    Invoke-RestMethod -Method Post -Uri "$bridge$path" -Body $bytes -ContentType 'application/json; charset=utf-8' -TimeoutSec $timeout | Out-Null
+    Invoke-RestMethod -Method Post -Uri "$bridge$path" -Headers (Auth) -Body $bytes -ContentType 'application/json; charset=utf-8' -TimeoutSec $timeout | Out-Null
     return $true
   } catch { return $false }
 }
@@ -396,7 +400,7 @@ $timer = New-Object System.Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromMilliseconds(150)
 $timer.Add_Tick({
   try {
-    $s = Invoke-RestMethod -Uri "$bridge/popup/state" -TimeoutSec 1
+    $s = Invoke-RestMethod -Uri "$bridge/popup/state" -Headers (Auth) -TimeoutSec 1
     $phase = if ($labels.ContainsKey($s.phase)) { $labels[$s.phase] } else { $s.phase }
     if ($s.tool -and $s.phase -eq 'tooling') { $phase = "working · $($s.tool)" }
     $el.Status.Text = "  ·  $phase"

@@ -101,6 +101,19 @@ export function typecheck(file) {
   })
 }
 
+/**
+ * Every @import in a stylesheet points at Google Fonts. Each import's address
+ * is pulled out and checked. (The old one-line pattern let the quote match
+ * nothing and then tested the quote itself, so a perfectly good
+ * `@import url('https://fonts.googleapis.com/…')` was refused.)
+ */
+export function onlyGoogleFonts(css) {
+  for (const m of String(css).matchAll(/@import\s+(?:url\(\s*)?['"]?([^'")\s;]*)/gi)) {
+    if (!m[1].toLowerCase().startsWith('https://fonts.googleapis.com/')) return false
+  }
+  return true
+}
+
 /** Plain checks before the compiler: imports and anything with no place in a layout. */
 export function layoutProblems(tsx) {
   const problems = []
@@ -338,7 +351,7 @@ export function customizeServer({ ask, allowWrites }) {
               const style = String(css ?? '')
               const problems = layoutProblems(code)
               if (/<\/?script|javascript:|expression\s*\(/i.test(style)) problems.push('the stylesheet must be plain CSS')
-              if (/@import\s+(url\()?\s*['"]?(?!https:\/\/fonts\.googleapis\.com)/i.test(style)) {
+              if (!onlyGoogleFonts(style)) {
                 problems.push('the stylesheet may only @import Google Fonts')
               }
               if (problems.length) return fail(`Not applied: ${problems.join('; ')}.`)
@@ -422,7 +435,7 @@ export function customizeServer({ ask, allowWrites }) {
               if (/<\/?script|javascript:|expression\s*\(|behavior\s*:/i.test(text)) {
                 return fail('Only plain CSS is allowed.')
               }
-              if (/@import\s+(url\()?\s*['"]?(?!https:\/\/fonts\.googleapis\.com)/i.test(text)) {
+              if (!onlyGoogleFonts(text)) {
                 return fail('Only Google Fonts may be imported.')
               }
               try {

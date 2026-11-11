@@ -27,6 +27,7 @@ import { openApp } from './pc.mjs'
 import { status as telemetry } from './telemetry.mjs'
 import { spawn as spawnProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 const SCRIPTS = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'scripts')
@@ -44,6 +45,21 @@ const popupState = { phase: 'offline', heard: '', said: '', tool: '', muted: fal
  * (scripts/wake_listener.py), so nothing at all is heard — and it stays muted
  * across restarts until unmuted.
  */
+/**
+ * The local key. Browser pages are kept out by their Origin, which a page
+ * cannot fake; programs on this machine send no Origin at all, and until now
+ * any of them could tell JARVIS what to do. They must now present this key,
+ * made fresh at every start and kept in the user's own ~/.jarvis — the popup
+ * and the wake listener read it from there.
+ */
+const BRIDGE_TOKEN = randomBytes(24).toString('hex')
+try {
+  mkdirSync(join(homedir(), '.jarvis'), { recursive: true })
+  writeFileSync(join(homedir(), '.jarvis', 'bridge-token'), BRIDGE_TOKEN)
+} catch (err) {
+  console.warn(`[jarvis] could not write the bridge key: ${err.message}`)
+}
+
 const MUTE_FILE = join(homedir(), '.jarvis', 'muted')
 let muted = existsSync(MUTE_FILE)
 popupState.muted = muted
@@ -143,6 +159,7 @@ const DOCK_APPS = {
   terminal: () => openApp('terminal'),
   settings: () => openApp('settings'),
   calculator: () => openApp('calculator'),
+  notepad: () => openApp('notepad'),
 }
 import { assistantServer, memoryPrompt, startScheduler } from './assistant.mjs'
 import { journalPrompt, record as recordExchange } from './journal.mjs'
@@ -1052,6 +1069,16 @@ const handleRequest = async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, cors)
     return res.end()
+  }
+
+  // Commands from outside a browser need the local key (see BRIDGE_TOKEN).
+  // Pages are already held to their Origin above; GETs for images and the
+  // health check stay open, the popup's live state does not.
+  const command = req.method === 'POST' || req.url === '/popup/state'
+  if (command && !origin && !ALLOW_NO_ORIGIN && req.headers['x-jarvis-token'] !== BRIDGE_TOKEN) {
+    console.warn(`[jarvis] refused ${req.method} ${req.url}: no valid local key`)
+    res.writeHead(401, cors)
+    return res.end('missing or wrong local key')
   }
 
   if (req.method === 'GET' && req.url === '/health') {

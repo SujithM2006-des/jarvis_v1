@@ -82,7 +82,15 @@ def bridge():
 def wake_window():
     """Tell the open JARVIS window to listen now. True if one was there."""
     try:
-        req = urllib.request.Request("http://127.0.0.1:8787/wake", data=b"", method="POST")
+        # The bridge's local key, made fresh at each start (bridge/server.mjs).
+        try:
+            token = (HOME / "bridge-token").read_text().strip()
+        except OSError:
+            token = ""
+        req = urllib.request.Request(
+            "http://127.0.0.1:8787/wake", data=b"", method="POST",
+            headers={"x-jarvis-token": token},
+        )
         with urllib.request.urlopen(req, timeout=1) as r:
             return int(json.load(r).get("clients", 0)) > 0
     except Exception:

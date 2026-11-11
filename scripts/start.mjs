@@ -12,7 +12,7 @@
 
 import { spawn } from 'node:child_process'
 import process from 'node:process'
-import { appendFileSync, cpSync, existsSync, mkdirSync } from 'node:fs'
+import { appendFileSync, cpSync, existsSync, mkdirSync, renameSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -89,6 +89,11 @@ const paint = (tag, colour) => (line) =>
 const LOG_FILE = join(homedir(), '.jarvis', 'jarvis.log')
 try {
   mkdirSync(dirname(LOG_FILE), { recursive: true })
+  // Rotate past 5 MB, keeping one previous file: the log records every voice
+  // command, and left alone it grew without limit.
+  if (existsSync(LOG_FILE) && statSync(LOG_FILE).size > 5 * 1024 * 1024) {
+    renameSync(LOG_FILE, LOG_FILE.replace(/\.log$/, '.old.log'))
+  }
   appendFileSync(LOG_FILE, `\n===== ${new Date().toLocaleString()} start ${process.argv.slice(2).join(' ')} =====\n`)
 } catch {
   /* logging is a convenience, never a reason not to start */
@@ -110,22 +115,46 @@ for (const stream of [process.stdout, process.stderr]) {
 
 const children = []
 
-function run(name, command, args, colour, env) {
+/** Crash restarts allowed in a window, before giving up for good. */
+const RESTARTS = 5
+const RESTART_WINDOW_MS = 10 * 60 * 1000
+
+function run(name, command, args, colour, env, { restart = false } = {}) {
   const label = paint(name, colour)
-  const child = spawn(command, args, {
-    env: { ...process.env, ...env },
-    shell: false,
-  })
-  child.stdout.on('data', (d) => process.stdout.write(label(d) + '\n'))
-  child.stderr.on('data', (d) => process.stderr.write(label(d) + '\n'))
-  child.on('exit', (code) => {
-    // If either half dies the other is useless, so take the whole thing down
-    // rather than leave a half-running app that looks alive but cannot answer.
-    console.log(`\x1b[${colour}m${name}\x1b[0m exited (${code}); stopping the rest.`)
-    shutdown(code ?? 0)
-  })
-  children.push(child)
-  return child
+  const crashes = []
+  const start = () => {
+    const child = spawn(command, args, {
+      env: { ...process.env, ...env },
+      shell: false,
+    })
+    child.stdout.on('data', (d) => process.stdout.write(label(d) + '\n'))
+    child.stderr.on('data', (d) => process.stderr.write(label(d) + '\n'))
+    child.on('exit', (code) => {
+      const i = children.indexOf(child)
+      if (i >= 0) children.splice(i, 1)
+      if (stopping) return
+      // The bridge comes back on its own after a crash — the window
+      // reconnects by itself — rather than taking the whole app down with it.
+      // Only a run of crashes stops everything, so a broken bridge cannot spin.
+      const now = Date.now()
+      while (crashes.length && now - crashes[0] > RESTART_WINDOW_MS) crashes.shift()
+      if (restart && code !== 0 && crashes.length < RESTARTS) {
+        crashes.push(now)
+        console.log(`\x1b[${colour}m${name}\x1b[0m crashed (${code}); restarting (${crashes.length}/${RESTARTS}).`)
+        setTimeout(() => {
+          if (!stopping) start()
+        }, 2000)
+        return
+      }
+      // Otherwise the other half is useless without it: take the whole thing
+      // down rather than leave a half-running app that cannot answer.
+      console.log(`\x1b[${colour}m${name}\x1b[0m exited (${code}); stopping the rest.`)
+      shutdown(code ?? 0)
+    })
+    children.push(child)
+    return child
+  }
+  return start()
 }
 
 let stopping = false
@@ -168,7 +197,7 @@ vendorWasm()
 vendorOrt()
 
 console.log('\nJ.A.R.V.I.S. starting — the brain and the face.\n')
-run('bridge', 'node', ['bridge/server.mjs'], '36', bridgeEnv)
+run('bridge', 'node', ['bridge/server.mjs'], '36', bridgeEnv, { restart: true })
 // npm is a shell script on most systems; call the vite binary directly so we do
 // not need shell:true (which would break the argument handling above).
 run('face', process.execPath, ['node_modules/vite/bin/vite.js'], '35', {})

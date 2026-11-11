@@ -1050,7 +1050,9 @@ export default function App() {
 
   return (
     <>
-      <Scene />
+      {/* Not rendered at all when a custom layout replaces it: made invisible
+          with CSS, the 3D scene kept drawing every frame on the GPU. */}
+      {!(Layout && (hiddenParts as readonly string[]).includes('scene')) && <Scene />}
       {Layout && (
         <LayoutBoundary>
           <Layout />

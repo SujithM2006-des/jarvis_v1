@@ -242,6 +242,17 @@ body {
 .vg-pill-thinking { color: #c1c8ff; border-color: rgba(130, 140, 255, 0.5); background: rgba(45, 45, 130, 0.35); }
 .vg-pill-tooling { color: #ffd291; border-color: rgba(255, 175, 70, 0.5); background: rgba(110, 66, 10, 0.35); }
 .vg-pill-offline { color: #ffa0a0; border-color: rgba(255, 110, 110, 0.45); background: rgba(110, 20, 20, 0.35); }
+.vg-pill-muted {
+  color: #ffb0b0 !important;
+  border: 1px solid rgba(255, 100, 110, 0.55) !important;
+  background: rgba(130, 20, 30, 0.4) !important;
+  pointer-events: auto;
+}
+.vg-pill-muted:hover { background: rgba(160, 30, 40, 0.5) !important; }
+.vg-mic.vg-muted {
+  background: linear-gradient(135deg, #e0465a, #8a1a2a) !important;
+  box-shadow: 0 0 18px rgba(224, 70, 90, 0.55);
+}
 .vg-when {
   display: grid;
   justify-items: end;

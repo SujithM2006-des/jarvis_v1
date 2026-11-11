@@ -5,8 +5,10 @@ import {
   launch,
   listen,
   openPopup,
+  mute,
   phaseLabel,
   useJarvis,
+  useMuted,
   useNow,
   useStatus,
   type JarvisPhase,
@@ -281,7 +283,9 @@ function Goals({ i }: { i: number }) {
 
 /** Vertical bars, symmetric about the middle, moving with his voice. */
 function Wave({ level, bars = 27, idle = 0.1, className = '' }: { level: number; bars?: number; idle?: number; className?: string }) {
-  const now = useNow(80)
+  // Fast only while there is a voice to follow; idle, a slow drift is enough
+  // and saves re-rendering a dozen times a second for nothing.
+  const now = useNow(level > 0.02 ? 80 : 500)
   const t = now.getTime() / 140
   const live = Math.max(idle, Math.min(1, level * 2.4))
   return (
@@ -381,8 +385,9 @@ function Conversation() {
 
 function AskBar() {
   const { phase, level, caption } = useJarvis()
+  const muted = useMuted()
   const [text, setText] = useState('')
-  const listening = phase === 'listening' || phase === 'waking'
+  const listening = !muted && (phase === 'listening' || phase === 'waking')
   const send = () => {
     if (!text.trim()) return
     void ask(text)
@@ -393,12 +398,21 @@ function AskBar() {
       <Wave level={listening ? level : 0} bars={7} idle={listening ? 0.45 : 0.3} className="vg-ask-wave" />
       <input
         value={text}
-        placeholder={listening ? caption || 'Listening…' : 'Ask me anything…'}
+        placeholder={muted ? 'Microphone muted — type here, or tap the mic to unmute' : listening ? caption || 'Listening…' : 'Ask me anything…'}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && send()}
       />
-      <button type="button" className="vg-mic" title={listening ? 'Stand by' : 'Talk to JARVIS'} onClick={() => void listen()}>
-        <Icon size={20}>{I.mic}</Icon>
+      {/* Muted: the mic shows it, and a tap unmutes and listens. */}
+      <button
+        type="button"
+        className={`vg-mic ${muted ? 'vg-muted' : ''}`}
+        title={muted ? 'Microphone muted — tap to unmute' : listening ? 'Stand by' : 'Talk to JARVIS'}
+        onClick={() => void listen()}
+      >
+        <Icon size={20}>
+          {I.mic}
+          {muted && <path d="M4 4l16 16" />}
+        </Icon>
       </button>
       <button type="button" className="vg-send" title="Send" onClick={send} disabled={!text.trim()}>
         <Icon size={18}>{I.send}</Icon>
@@ -419,6 +433,7 @@ export default function CustomLayout() {
   const now = useNow(1000)
   const s = useStatus()
   const { phase, level, caption, activeTool } = useJarvis()
+  const muted = useMuted()
   const [nav, setNav] = useState('home')
 
   const hm = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }).split(' ')[0]
@@ -485,10 +500,17 @@ export default function CustomLayout() {
           <span className="vg-hm-line vg-flip" />
         </div>
         <div className="vg-head-right">
-          <span className={`vg-pill vg-pill-${phase}`}>
-            <i />
-            {phaseLabel[phase] ?? 'Online'}
-          </span>
+          {muted ? (
+            <button type="button" className="vg-pill vg-pill-muted" title="Tap to unmute" onClick={() => void mute(false)}>
+              <i />
+              Muted
+            </button>
+          ) : (
+            <span className={`vg-pill vg-pill-${phase}`}>
+              <i />
+              {phaseLabel[phase] ?? 'Online'}
+            </span>
+          )}
           <span className="vg-when">
             <b>{hm} {ampm}</b>
             {now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
@@ -580,7 +602,7 @@ export default function CustomLayout() {
               { label: 'Browser', icon: I.globe, run: () => void launch('chrome') },
               { label: 'Code', icon: I.code, run: () => void launch('code') },
               { label: 'Music', icon: I.music, run: () => void launch('spotify') },
-              { label: 'Notes', icon: I.note, run: () => void ask('Open Notepad so I can take notes.') },
+              { label: 'Notes', icon: I.note, run: () => void launch('notepad') },
             ].map((a) => (
               <button key={a.label} type="button" onClick={a.run}>
                 <Icon size={20} w={1.5}>{a.icon}</Icon>

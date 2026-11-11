@@ -7,6 +7,11 @@ import { Effects } from './Effects'
 import { Pointer } from './Pointer'
 import { GestureGuide } from './GestureGuide'
 import { Telemetry } from './Telemetry'
+import CustomLayout, { hide as layoutHides } from '../custom/CustomLayout'
+
+/** A part a custom layout replaces is not rendered at all — hiding it with CSS
+ *  left it running (the telemetry kept polling the bridge every 3 s). */
+const replaced = (part: string) => Boolean(CustomLayout) && (layoutHides as readonly string[]).includes(part)
 
 const statusText: Record<Phase, string> = {
   offline: 'OFFLINE',
@@ -210,7 +215,7 @@ export function Hud() {
           app dock either side of the reactor. It replaces the old SYSTEMS and
           SIGNAL rails (both live on inside it) and hides with the same
           `systems` chrome switch, so ui_chrome can still clear the frame. */}
-      {ui.chrome.systems && <Telemetry />}
+      {ui.chrome.systems && !replaced('telemetry') && <Telemetry />}
 
       <AnimatePresence>
         {activeTool && ui.chrome.toolBadge && (

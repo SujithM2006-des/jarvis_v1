@@ -61,6 +61,29 @@ export function useStatus(ms = 3000): Status | null {
   return s
 }
 
+/** Whether the microphone is muted (from the popup or by voice), refreshed every 2 s. */
+export function useMuted(): boolean {
+  const [m, set] = useState(false)
+  useEffect(() => {
+    let alive = true
+    const pull = async () => {
+      try {
+        const res = await fetch(`${BRIDGE_HTTP_URL}/popup/state`, { cache: 'no-store' })
+        if (res.ok && alive) set(Boolean((await res.json()).muted))
+      } catch {
+        /* bridge down: keep the last reading */
+      }
+    }
+    void pull()
+    const id = window.setInterval(pull, 2000)
+    return () => {
+      alive = false
+      window.clearInterval(id)
+    }
+  }, [])
+  return m
+}
+
 /** The current time, ticking. */
 export function useNow(ms = 1000): Date {
   const [now, set] = useState(() => new Date())
@@ -124,6 +147,6 @@ export const circle = () => post('/circle')
 /** Open the onscreen popup. */
 export const openPopup = () => post('/popup/show')
 
-export type LaunchId = 'chrome' | 'files' | 'whatsapp' | 'code' | 'spotify' | 'terminal' | 'settings'
+export type LaunchId = 'chrome' | 'files' | 'whatsapp' | 'code' | 'spotify' | 'terminal' | 'settings' | 'calculator' | 'notepad'
 /** Open one of the dock apps. */
 export const launch = (app: LaunchId) => post('/launch', { app })

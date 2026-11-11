@@ -1013,13 +1013,13 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
   // fresh one now instead of waiting for the heartbeat to notice.
   const onVisible = () => {
     if (stopped || document.visibilityState !== 'visible') return
-    try {
-      rec?.abort()
-    } catch {
-      /* already gone */
-    }
+    // Only if it has actually stopped. Aborting a healthy session here cost a
+    // deaf gap every time the window came back — and the onscreen popup
+    // minimises and restores it constantly (158 restarts in one evening's
+    // log), which is where first words went missing. A session that died
+    // silently while hidden is still caught by the heartbeat below.
+    if (running) return
     rec = null
-    running = false
     touch()
     setTimeout(spin, 100)
   }
