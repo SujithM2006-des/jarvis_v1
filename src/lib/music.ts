@@ -244,8 +244,15 @@ export function stopAll() {
   })
 }
 
+/**
+ * VITE_MUSIC_WORK=off drops the working cue — the percussive track that rose
+ * while a tool ran, which reads as a drum under every search.
+ */
+const WORK_OFF = String(import.meta.env.VITE_MUSIC_WORK ?? '').trim().toLowerCase() === 'off'
+
 /** The work cue rises while a tool runs and falls the moment it's done. */
 export function working(on: boolean) {
+  if (WORK_OFF) return
   set('work', on ? LEVEL.work : 0, on ? 900 : 1400)
 }
 

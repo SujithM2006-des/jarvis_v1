@@ -110,13 +110,32 @@ def main():
     # The voice-activity filter zeroes the score unless there is human speech,
     # which is what keeps a low threshold from firing on taps, music or fans.
     model = Model(wakeword_models=["hey_jarvis"], inference_framework="onnx", vad_threshold=0.5)
-    log(f"ready (threshold {args.threshold})")
+
+    # A second detector: Vosk's small Indian English model, listening only for
+    # the phrase. openWakeWord was trained mostly on synthetic American voices
+    # and scores some accents near zero; either detector hearing it is enough.
+    # Optional — without the model folder the listener runs on openWakeWord.
+    vosk_rec = None
+    vosk_dir = HOME / "vosk" / "vosk-model-small-en-in-0.4"
+    if vosk_dir.exists():
+        try:
+            from vosk import KaldiRecognizer, Model as VoskModel, SetLogLevel
+
+            SetLogLevel(-1)
+            vosk_rec = KaldiRecognizer(
+                VoskModel(str(vosk_dir)), RATE, json.dumps(["hey jarvis", "jarvis", "[unk]"])
+            )
+        except Exception as err:
+            log(f"Vosk unavailable, using openWakeWord alone: {err}")
+    log(f"ready (threshold {args.threshold}, Vosk {'on' if vosk_rec else 'off'})")
 
     stream = None
     last_fire = 0.0  # last time the phrase was acted on at all
     last_start = -1e9  # last cold start of JARVIS
     last_check = 0.0
     jarvis_on = False
+    last_data = last_sound = time.monotonic()
+    stat_at, stat_peak, stat_score = time.monotonic(), 0, 0.0
 
     paused = False
     while True:
@@ -156,17 +175,66 @@ def main():
                 stream = sd.InputStream(samplerate=RATE, channels=1, dtype="int16", blocksize=CHUNK)
                 stream.start()
                 model.reset()
+                last_data = last_sound = time.monotonic()
 
-            audio, _ = stream.read(CHUNK)
-            score = float(model.predict(audio[:, 0])["hey_jarvis"])
-            if score < args.threshold:
+            # Never block on the microphone: a device that stops delivering
+            # audio (Chrome letting go of it, a driver hiccup) would otherwise
+            # freeze this loop silently — alive, logging nothing, hearing
+            # nothing. No audio for 3 s, or pure digital silence for 30 s,
+            # and the stream is reopened.
+            now = time.monotonic()
+            if stream.read_available < CHUNK:
+                if now - last_data > 3:
+                    log("microphone stalled - reopening it")
+                    stream.close()
+                    stream = None
+                else:
+                    time.sleep(0.02)
                 continue
+            audio, _ = stream.read(CHUNK)
+            last_data = now
+            peak = int(np.abs(audio).max())
+            if peak > 0:
+                last_sound = now
+            elif now - last_sound > 30:
+                log("microphone gave pure silence for 30 s - reopening it")
+                stream.close()
+                stream = None
+                continue
+
+            score = float(model.predict(audio[:, 0])["hey_jarvis"])
+
+            # Once a minute: proof of life, and what it is actually hearing.
+            stat_peak = max(stat_peak, peak)
+            stat_score = max(stat_score, score)
+            if now - stat_at > 60:
+                log(f"listening - loudest {stat_peak}, best score {stat_score:.2f}")
+                stat_at, stat_peak, stat_score = now, 0, 0.0
+
+            # Vosk: only the whole phrase "hey jarvis", and only on a finished
+            # result. Restricted to a tiny grammar it forces near-misses onto
+            # the nearest phrase — accepting "jarvis" alone or partial results,
+            # "go to stand by" woke him six times in a minute. Runs whether he
+            # is open or not: it is the detector that copes with an Indian
+            # accent, and the page ignores a wake while it is already listening,
+            # so a stray one cannot chop a sentence.
+            vosk_heard = False
+            if vosk_rec is not None:
+                if vosk_rec.AcceptWaveform(audio.tobytes()):
+                    vosk_heard = "hey jarvis" in json.loads(vosk_rec.Result()).get("text", "")
+            if score < args.threshold and not vosk_heard:
+                continue
+            if vosk_heard and score < args.threshold:
+                score = 1.0  # for the log: it was Vosk that caught it
+                log('Vosk caught "Hey Jarvis"')
 
             # One utterance spans several 80 ms frames: count it once.
             if time.monotonic() - last_fire < 2:
                 continue
             last_fire = time.monotonic()
             model.reset()
+            if vosk_rec is not None:
+                vosk_rec.Reset()
 
             # Running: wake the window on the spot, like "Hey Google". Tried
             # whenever the bridge might be up, not only when the last check

@@ -89,7 +89,17 @@ The wake word runs in its own small Python environment:
 
 ```bat
 python -m venv "%USERPROFILE%\.jarvis\wake-venv"
-"%USERPROFILE%\.jarvis\wake-venv\Scripts\python.exe" -m pip install openwakeword sounddevice numpy
+"%USERPROFILE%\.jarvis\wake-venv\Scripts\python.exe" -m pip install openwakeword sounddevice numpy vosk
+```
+
+Recommended: a second, accent-friendly detector — Vosk's small Indian English
+model (~54 MB, offline). The listener uses it automatically when it is present;
+without it, openWakeWord works alone.
+
+```powershell
+$dir = "$env:USERPROFILE\.jarvis\vosk"; New-Item -ItemType Directory -Force $dir | Out-Null
+Invoke-WebRequest https://alphacephei.com/vosk/models/vosk-model-small-en-in-0.4.zip -OutFile "$dir\model.zip"
+Expand-Archive "$dir\model.zip" -DestinationPath $dir; Remove-Item "$dir\model.zip"
 ```
 
 Then put the switch on your desktop:
@@ -124,6 +134,7 @@ Linked devices).
 |---|---|
 | **"Hey Jarvis"** | Wake him — chime, then speak your request |
 | Say "Hey Jarvis" while he talks | Stop him and listen |
+| **"Go to standby"** | He goes quiet until the next "Hey Jarvis" (also "stand down", "stop listening", "go to sleep", "that's all", "goodbye") |
 | **Space** | Talk without the wake word |
 | **V** | Cycle the voice |
 | **D** | Diagnostics — what he heard and why |
@@ -175,7 +186,8 @@ Frontend settings go in `.env.local`; bridge settings are environment variables.
 | `VITE_TTS_ENGINE` | `system` (instant) or `kokoro` (neural, British, GPU) |
 | `VITE_SPEECH_LANG` | Recognition accent: `en-IN`, `en-GB`, `en-US` … |
 | `VITE_END_PAUSE_MS` | Quiet that ends a command — raise it if you get cut off |
-| `VITE_MUSIC_AMBIENT` / `VITE_MUSIC` | `off` to drop the background music / all music |
+| `VITE_MUSIC_AMBIENT` / `VITE_MUSIC_WORK` / `VITE_MUSIC` | `off` to drop the background music / the working cue / all music |
+| `VITE_WAKE_GREETING` | `spoken`: "Yes, sir?" after "Hey Jarvis" if you pause (never over you) |
 | `VITE_AUTOSTART` | `off` brings back the INITIALISE button |
 | `JARVIS_PERSONA` | `formal` for the original terse film-butler persona |
 | `JARVIS_MODEL` / `JARVIS_EFFORT` | Model and reasoning effort |
@@ -184,6 +196,10 @@ Frontend settings go in `.env.local`; bridge settings are environment variables.
 
 The wake word's sensitivity is `--threshold` in `scripts/wake_listener.py`
 (default 0.15): raise it if JARVIS starts by mistake, lower it if he misses you.
+If he misses you often, check the microphone isn't overloading: a recording
+volume of 100% distorts loud speech, and distorted speech isn't recognised —
+around 50% works well (Settings → System → Sound → Microphone → Input volume).
+`wake-listener.log` logs the loudest level each minute; 32767 is the ceiling.
 
 ---
 

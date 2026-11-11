@@ -60,6 +60,20 @@ if (import.meta.hot) {
  *  people say his name and *then* think about what they wanted. */
 const AWAIT_SPEECH_MS = 14000
 
+/**
+ * Phrases that put him on standby. Matched only against a short utterance, so
+ * "remind me to go to sleep at eleven" is still a request, not a command.
+ */
+const STANDBY =
+  /\b(go(ing)?\s+(in)?to\s+(stand\s*-?\s*by|standby|sleep)|stand\s*-?\s*by(\s+mode)?|standby(\s+mode)?|stand\s+down|stop\s+listening|go\s+to\s+sleep|sleep\s+mode|that'?s\s+all|good\s*bye|bye\s+bye|dismissed)\b/i
+const STANDBY_MAX_WORDS = 7
+const STANDBY_LINES = [
+  'Standing by, sir.',
+  "Very good, sir. I'll be here.",
+  "Of course. Just say the word when you need me.",
+  'Going quiet, sir.',
+]
+
 /** Answer the wake word with a spoken line as well as the chime. Off by default. */
 const WAKE_GREETING_SPOKEN =
   String(import.meta.env.VITE_WAKE_GREETING ?? '').trim().toLowerCase() === 'spoken'
@@ -123,6 +137,22 @@ export default function App() {
     music.duck(false)
     sfx.duck(false)
     s.setPhase('dormant')
+  }
+
+  /**
+   * "Go to standby", said out loud. Handled here rather than sent to the
+   * model: the model would say "Standing by" while the follow-up window kept
+   * the microphone open, so he went on answering everything said in the room.
+   * This acknowledges briefly and closes the mic until the next "Hey Jarvis".
+   */
+  const standBy = () => {
+    const phase = store.getState().phase
+    if (phase === 'thinking' || phase === 'tooling' || phase === 'speaking') interrupt()
+    goDormant()
+    const s = createSpeaker()
+    speaker.current = s
+    s.say(STANDBY_LINES[Math.floor(Math.random() * STANDBY_LINES.length)])
+    void s.end()
   }
 
   /** Open the mic and wait. `window` is how long before he gives up. */
@@ -269,6 +299,8 @@ export default function App() {
    */
   const lastWakeAt = useRef(0)
   const WAKE_DEDUP_MS = 2500
+  const greetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const GREETING_DELAY_MS = 1500
 
   const onWake = (trailing: string) => {
     const phase = store.getState().phase
@@ -298,14 +330,22 @@ export default function App() {
     // Like "Hey Google": a chime and an open microphone, nothing spoken. A
     // greeting costs a second or more before the user can talk, every time.
     // VITE_WAKE_GREETING=spoken brings the spoken "Yes, sir?" back.
-    if (WAKE_GREETING_SPOKEN) {
-      const greeting = createSpeaker()
-      speaker.current = greeting
-      greeting.say(attention())
-      void greeting.end()
-    }
-
     listen(AWAIT_SPEECH_MS)
+
+    // The spoken "Yes, sir?" waits for a pause: only if the user hasn't begun
+    // talking within GREETING_DELAY_MS. Said straight away it landed on top of
+    // "Hey Jarvis, open…" and cut the request off. onSpeechStart cancels it.
+    if (WAKE_GREETING_SPOKEN) {
+      if (greetTimer.current) clearTimeout(greetTimer.current)
+      greetTimer.current = setTimeout(() => {
+        greetTimer.current = null
+        if (store.getState().phase !== 'listening') return
+        const greeting = createSpeaker()
+        speaker.current = greeting
+        greeting.say(attention())
+        void greeting.end()
+      }, GREETING_DELAY_MS)
+    }
   }
 
   /**
@@ -320,6 +360,9 @@ export default function App() {
     // shows what state he was in when it arrived.
     console.warn(`[voice] background wake received (phase ${phase})`)
     if (phase === 'offline' || phase === 'boot') return
+    // Already listening: nothing to wake. Acting on it restarted the listen,
+    // which chopped whatever the user was in the middle of saying.
+    if (phase === 'waking' || phase === 'listening') return
     if (Date.now() - lastWakeAt.current < WAKE_DEDUP_MS) return
     if (phase === 'speaking' || phase === 'thinking' || phase === 'tooling') {
       silence()
@@ -337,6 +380,11 @@ export default function App() {
    */
   const onSpeechStart = () => {
     clearIdle()
+    // They've started talking: the pending "Yes, sir?" is no longer wanted.
+    if (greetTimer.current) {
+      clearTimeout(greetTimer.current)
+      greetTimer.current = null
+    }
     const phase = store.getState().phase
     if (phase === 'offline' || phase === 'boot' || phase === 'dormant') return
 
@@ -385,6 +433,13 @@ export default function App() {
       said = `${carryOver.current} ${said}`
       carryOver.current = ''
       console.warn(`[voice] joined a cut-off request: "${said.slice(0, 80)}"`)
+    }
+
+    // "Go to standby" — handled here, never sent to the model.
+    if (STANDBY.test(said) && said.split(/\s+/).length <= STANDBY_MAX_WORDS) {
+      console.warn(`[voice] standby on "${said}"`)
+      standBy()
+      return
     }
 
     void respond(said)
