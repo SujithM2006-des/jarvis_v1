@@ -36,7 +36,30 @@ const SCRIPTS = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'script
  * last thing heard, and the answer as it streams. Fed from the conversation
  * below; read by the popup at GET /popup/state.
  */
-const popupState = { phase: 'offline', heard: '', said: '', tool: '' }
+const popupState = { phase: 'offline', heard: '', said: '', tool: '', muted: false }
+
+/**
+ * Microphone mute, from the popup. While the marker file exists the window's
+ * recogniser is stopped and the background wake listener closes the mic
+ * (scripts/wake_listener.py), so nothing at all is heard — and it stays muted
+ * across restarts until unmuted.
+ */
+const MUTE_FILE = join(homedir(), '.jarvis', 'muted')
+let muted = existsSync(MUTE_FILE)
+popupState.muted = muted
+
+function setMuted(on) {
+  muted = Boolean(on)
+  popupState.muted = muted
+  try {
+    if (muted) writeFileSync(MUTE_FILE, new Date().toISOString())
+    else rmSync(MUTE_FILE, { force: true })
+  } catch (err) {
+    console.warn(`[jarvis] could not save mute state: ${err.message}`)
+  }
+  console.log(`[jarvis] microphone ${muted ? 'MUTED' : 'unmuted'}`)
+  broadcast({ type: 'mute', on: muted })
+}
 
 /** Send to every connected JARVIS window. */
 const broadcast = (msg) => {
@@ -122,6 +145,9 @@ const DOCK_APPS = {
   calculator: () => openApp('calculator'),
 }
 import { assistantServer, memoryPrompt, startScheduler } from './assistant.mjs'
+import { journalPrompt, record as recordExchange } from './journal.mjs'
+import { composeWithAttachments, prepareAttachments, tidyAttached } from './attachments.mjs'
+import { customizeServer } from './customize.mjs'
 
 /**
  * Every open Jarvis window, so something Jarvis says on his own — a reminder
@@ -135,7 +161,7 @@ const announce = (text) => {
   }
 }
 import { homedir, tmpdir } from 'node:os'
-import { mkdirSync, readFileSync, realpathSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { openRemote, proxyError, vetTarget, PROXY_UA } from './net.mjs'
@@ -675,9 +701,15 @@ const PROMPT_ASSISTANT = `Personal assistant — you are theirs, and you remembe
   unless asked the time, and never mention the tag.
 - Memory (\`jarvis_assistant\`): "remember that…" is \`remember\`. Also remember on
   your own anything they will expect you to know next time — who someone is, how
-  a contact is saved, their timetable, city, preferences — and when they correct
-  you. "Forget…" is \`forget\`. What you already know is listed at the end of
-  these instructions; use it without comment.
+  a contact is saved, their timetable, city, preferences, projects they are
+  working on, where they keep things, people they mention, plans and deadlines —
+  and when they correct you. Do it quietly, without announcing it. "Forget…" is
+  \`forget\`. What you already know is listed at the end of these instructions;
+  use it without comment.
+- You also remember every conversation, across restarts: the recent ones are at
+  the end of these instructions, and \`search_history\` finds older ones. "What
+  did I ask you yesterday", "the file you made earlier", "like last time" — look
+  there before saying you don't know. Never claim to have no memory of the past.
 - Reminders and timers: \`set_reminder\`. Work out the exact local time from the
   clock. "Wake me in twenty minutes" is in_minutes. "Every day at seven" is
   repeat daily. "Wish Sarah happy birthday at twelve am" is a scheduled
@@ -701,11 +733,43 @@ const PROMPT_ASSISTANT = `Personal assistant — you are theirs, and you remembe
   Write only from what is on screen — never invent figures or claims. Then say
   in one sentence what you saved and where ("Saved it to Documents, sir — it's
   open."). Don't read the whole document aloud unless asked.
+- Files they attach in the onscreen popup arrive listed under their message
+  as "[Attached files: …]" with a path each. Read every one with \`Read\` first,
+  then do exactly what they asked with them: summarise, explain, answer
+  questions about, translate, extract tables, fix code, compare, turn into a PDF
+  with \`make_pdf\`, send on WhatsApp — whatever the request is. With no request,
+  say in a sentence or two what each file is. Speak a short answer; put long
+  material (a full summary, a table, code) on a blade or in a PDF and say so.
 - Typing: "type…" or "write … here" is \`type_text\` into the window they were in.
 - "Battery", "Wi-Fi", "how's my laptop" is \`system_status\`. Brightness is
   \`set_brightness\`. "Play X" is \`play_media\` (YouTube unless they say Spotify).
 - Shut down, restart or sleep: ask "Shall I shut down, sir?" first and call
   \`power\` with confirmed true only after they say yes.
+
+CUSTOMISING YOURSELF — your look and your voice (\`jarvis_custom\`):
+- Only when the user explicitly asks to customise or change your UI, look,
+  theme, style or voice. NEVER offer it, suggest it, hint at it, or ask
+  whether they would like to. Not after a complaint, not after a compliment,
+  not when idle. If they don't ask, it doesn't happen.
+- The look: they show you a picture ("make your UI look like this") or describe
+  a style. Look at the picture properly first. If it has a different
+  ARRANGEMENT from yours — a sidebar, cards, widgets, a different centrepiece,
+  an input bar — rebuild it: \`ui_layout_inspect\`, then \`ui_layout_apply\`
+  with a complete React layout and stylesheet that reproduces the picture
+  element by element (every card, label, icon, position and colour), driven by
+  live data from the kit. Only when it is a colour/font change to your
+  existing arrangement use \`ui_style_inspect\` and \`ui_style_apply\`. Either
+  way you get a screenshot back: compare it with their picture and apply again
+  where it is clearly off (at most three rounds). Then one short line: "Done,
+  sir — how's that?" "Undo that" is \`ui_layout_undo\` (or \`ui_style_undo\`);
+  "go back to your normal look" is \`ui_layout_reset\` and \`ui_style_reset\`.
+- The voice: they give a recording ("make your voice like this") —
+  \`voice_analyze\` on the attached audio, then \`voice_set\` with the closest
+  installed voice and the suggested rate and pitch, adjusted to anything they
+  said ("a bit deeper", "British"). Plain requests — "speak slower", "use a
+  female voice" — go straight to \`voice_set\`. "Your old voice" is
+  \`voice_reset\`. You match a recording's style with an installed voice; you
+  cannot and do not clone a real person's voice — say so plainly if asked.
 
 THE BRIEFING. "Good morning", "brief me", "what's my day like": gather in
 parallel — \`weather\`, today's calendar events, important unread mail,
@@ -1008,6 +1072,13 @@ const handleRequest = async (req, res) => {
   // recogniser can transcribe it. Relayed to every open window, which chimes
   // and listens. Harmless if abused — the worst it does is open the mic UI —
   // and pages from other origins are already refused above.
+  // Voice diagnostics from the window (src/lib/voice.ts vlog), into this log.
+  if (req.method === 'POST' && req.url === '/log') {
+    const line = String((await readJson(req)).line ?? '').replace(/\s+/g, ' ').slice(0, 400)
+    if (line) console.log(`[voice] ${line}`)
+    res.writeHead(204, cors)
+    return res.end()
+  }
   if (req.method === 'POST' && req.url === '/wake') {
     let sent = 0
     for (const ws of CLIENTS) {
@@ -1040,13 +1111,31 @@ const handleRequest = async (req, res) => {
     return res.end(JSON.stringify({ closed }))
   }
   if (req.method === 'POST' && req.url === '/popup/ask') {
-    const text = String((await readJson(req)).text ?? '').trim().slice(0, 2000)
+    const body = await readJson(req)
+    let text = String(body.text ?? '').trim().slice(0, 2000)
+    // Files from the popup (📎, drag and drop, paste): copied where his file
+    // tools can read them, and listed under the request.
+    if (Array.isArray(body.files) && body.files.length) {
+      const att = await prepareAttachments(body.files)
+      console.log(`[jarvis] popup attached: ${att.items.map((i) => i.name).join(', ') || 'nothing'}` +
+        (att.problems.length ? ` (problems: ${att.problems.join('; ')})` : ''))
+      text = composeWithAttachments(text, att)
+    }
     const sent = text ? broadcast({ type: 'popup-ask', text }) : 0
     res.writeHead(sent ? 200 : 409, { ...cors, 'content-type': 'application/json' })
     return res.end(JSON.stringify({ sent }))
   }
+  // The popup's mute button: toggles, or sets with { on: true|false }.
+  if (req.method === 'POST' && req.url === '/popup/mute') {
+    const body = await readJson(req)
+    setMuted(typeof body.on === 'boolean' ? body.on : !muted)
+    res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8' })
+    return res.end(JSON.stringify({ muted }))
+  }
   // The popup's mic button: listen now, or — if already listening — standby.
+  // Tapped while muted, it unmutes first: that is plainly what is wanted.
   if (req.method === 'POST' && req.url === '/popup/mic') {
+    if (muted) setMuted(false)
     const sent = broadcast({ type: 'mic' })
     res.writeHead(sent ? 200 : 409, { ...cors, 'content-type': 'application/json; charset=utf-8' })
     return res.end(JSON.stringify({ sent }))
@@ -1494,11 +1583,15 @@ wss.on('connection', (socket) => {
   socket.send(
     JSON.stringify({ type: 'ready', servers: Object.keys(MCP_SERVERS) }),
   )
+  // A window that opens while muted must stay deaf from its first moment.
+  socket.send(JSON.stringify({ type: 'mute', on: muted }))
 
   /** Resolves the pending user message into the SDK's input generator. */
   let deliver = null
   let closed = false
   const inbox = []
+  /** The exchange in progress, for the conversation journal (journal.mjs). */
+  let exchange = null
 
   async function* userMessages() {
     while (!closed) {
@@ -1515,6 +1608,20 @@ wss.on('connection', (socket) => {
         hour: 'numeric', minute: '2-digit', hour12: true,
       })
       const iso = new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+      // Opened here, written to the journal when the answer is done. One cut
+      // short by a barge-in never gets a 'done', so it is written now instead.
+      if (exchange) {
+        recordExchange({
+          user: exchange.user,
+          reply: exchange.reply ? `${exchange.reply} [interrupted]` : '[interrupted before answering]',
+          tools: exchange.tools,
+        })
+      }
+      exchange = {
+        reply: '',
+        user: /^I've circled something on my screen/.test(text) ? '(Circle to Search on a screen region)' : tidyAttached(text),
+        tools: [],
+      }
       yield {
         type: 'user',
         message: { role: 'user', content: `[Local time: ${now} (${iso})]\n${text}` },
@@ -1544,6 +1651,16 @@ wss.on('connection', (socket) => {
     if (msg.type === 'text' && msg.delta) popupState.said += msg.delta
     else if (msg.type === 'tool') popupState.tool = String(msg.name ?? '').replace(/^mcp__[^_]+(_[^_]+)*__/, '').replace(/_/g, ' ')
     else if (msg.type === 'done' && msg.text) popupState.said = msg.text
+    // The journal: what was asked, what he said, what he did — kept on disk
+    // so the next session, after a restart, still knows.
+    if (exchange && msg.type === 'text' && msg.delta) exchange.reply += msg.delta
+    if (exchange && msg.type === 'tool' && msg.name) {
+      exchange.tools.push(String(msg.name).replace(/^mcp__[^_]+(_[^_]+)*__/, '').replace(/_/g, ' '))
+    }
+    if (exchange && msg.type === 'done') {
+      recordExchange({ user: exchange.user, reply: msg.text || exchange.reply, tools: exchange.tools })
+      exchange = null
+    }
     send({ ...msg, ask: answering })
   }
 
@@ -1697,6 +1814,10 @@ wss.on('connection', (socket) => {
         // WhatsApp Web, in its own Chrome window with a saved login.
         // Memory, reminders, timers, scheduled messages, weather.
         jarvis_assistant: assistantServer({ allowWrites: ALLOW_WRITES }),
+        // His own look and voice, changed only when the user asks. Built per
+        // connection: measuring a recording and setting the voice ask the
+        // browser, the same way the camera does.
+        jarvis_custom: customizeServer({ ask, allowWrites: ALLOW_WRITES }),
         ...(DISABLED.has('whatsapp')
           ? {}
           : { jarvis_whatsapp: whatsappServer({ allowWrites: ALLOW_WRITES }) }),
@@ -1706,7 +1827,8 @@ wss.on('connection', (socket) => {
       // of input tokens on every turn. Replacing it makes the persona stick,
       // keeps answers short enough to speak, and cuts cost per turn.
       // Plus the user's saved memory, read fresh for every new session.
-      systemPrompt: SYSTEM_PROMPT + memoryPrompt(),
+      // And the recent conversation from the journal, so a restart is not amnesia.
+      systemPrompt: SYSTEM_PROMPT + memoryPrompt() + journalPrompt(),
       // Run from JARVIS's own workspace rather than the home directory. MCP
       // discovery does not depend on it — settingSources is empty and the
       // servers are passed in explicitly above — and file tools resolve
@@ -1951,7 +2073,7 @@ wss.on('connection', (socket) => {
       // path in it; the popup shows a tidy label instead.
       popupState.heard = /^I've circled something on my screen/.test(text)
         ? '◯ Circle to search'
-        : text.replace(/^\[.*?\]\s*/, '').slice(0, 300)
+        : tidyAttached(text.replace(/^\[.*?\]\s*/, '')).slice(0, 300)
       popupState.said = ''
       popupState.tool = ''
       void settling.then(() => {

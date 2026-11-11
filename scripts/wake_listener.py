@@ -42,6 +42,9 @@ HOME = Path(os.environ["USERPROFILE"]) / ".jarvis"
 HOME.mkdir(parents=True, exist_ok=True)
 # Present while the desktop kill switch is OFF.
 KILL_SWITCH = HOME / "disabled"
+# Present while the microphone is muted from the onscreen popup: same effect
+# as the kill switch for listening, but JARVIS himself stays running.
+MUTED = HOME / "muted"
 
 logging.basicConfig(
     filename=HOME / "wake-listener.log",
@@ -143,15 +146,17 @@ def main():
             # The kill switch (desktop shortcut, scripts/jarvis-switch.ps1).
             # While it is off: microphone closed, phrase ignored, nothing
             # started — including at login, since this runs from Startup.
-            if KILL_SWITCH.exists():
+            off = KILL_SWITCH.exists()
+            if off or MUTED.exists():
                 if not paused:
                     paused = True
-                    log("switched OFF - not listening")
+                    log("switched OFF - not listening" if off else "microphone MUTED - not listening")
                 if stream is not None:
                     stream.stop()
                     stream.close()
                     stream = None
-                time.sleep(2)
+                # Short while muted, so unmuting takes effect almost at once.
+                time.sleep(2 if off else 0.5)
                 continue
             if paused:
                 paused = False

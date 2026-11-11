@@ -51,7 +51,7 @@ let recentUntil = 0
 
 /** Recognition lags the speakers by a few hundred milliseconds, so a sentence
  *  keeps arriving at the microphone well after it has finished playing. */
-const ECHO_TAIL_MS = 1800
+const ECHO_TAIL_MS = 3500
 
 /**
  * Why you cannot hear him.
@@ -164,6 +164,69 @@ const MAX_UNSPOKEN = 220
 
 const VOICE_PREF_KEY = 'jarvis.voice'
 
+/**
+ * The user's own voice settings, made on request ("make your voice like this
+ * recording", "speak slower") by the voice_set tool. Kept in this browser
+ * profile, so they survive restarts, and they win over the .env defaults.
+ */
+const PROFILE_KEY = 'jarvis.voiceProfile'
+export type VoiceProfile = { voice?: string; rate?: number; pitch?: number }
+
+function profile(): VoiceProfile | null {
+  try {
+    const p = JSON.parse(localStorage.getItem(PROFILE_KEY) ?? 'null')
+    return p && typeof p === 'object' ? p : null
+  } catch {
+    return null
+  }
+}
+
+const clamp = (v: unknown, lo: number, hi: number, dflt: number) => {
+  const n = Number(v)
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt
+}
+
+/** Installed English voices, for choosing one. */
+export function listVoices(): { name: string; lang: string }[] {
+  return speechSynthesis
+    .getVoices()
+    .filter((v) => /^en/i.test(v.lang))
+    .map((v) => ({ name: v.name, lang: v.lang }))
+}
+
+/**
+ * Change (or with null, clear) the voice profile. A name is matched loosely —
+ * "uk english female" finds "Google UK English Female". Returns what is now in
+ * effect, or an error naming what could not be found.
+ */
+export function setVoiceProfile(
+  change: { voice?: string | null; rate?: number | null; pitch?: number | null } | null,
+): { voice: string; rate: number; pitch: number } | { error: string } {
+  if (change === null) {
+    localStorage.removeItem(PROFILE_KEY)
+  } else {
+    const next: VoiceProfile = { ...(profile() ?? {}) }
+    if (change.voice) {
+      const want = change.voice.toLowerCase().trim()
+      const all = speechSynthesis.getVoices()
+      const hit =
+        all.find((v) => v.name.toLowerCase() === want) ??
+        all.find((v) => v.name.toLowerCase().includes(want)) ??
+        all.find((v) => want.split(/\s+/).every((w) => v.name.toLowerCase().includes(w)))
+      if (!hit) {
+        return { error: `No installed voice matches "${change.voice}". Installed: ${listVoices().map((v) => v.name).join(', ')}` }
+      }
+      next.voice = hit.name
+    }
+    if (change.rate != null) next.rate = clamp(change.rate, 0.6, 1.8, 1)
+    if (change.pitch != null) next.pitch = clamp(change.pitch, 0.5, 1.5, 1)
+    localStorage.setItem(PROFILE_KEY, JSON.stringify(next))
+  }
+  cachedVoice = undefined
+  const p = profile()
+  return { voice: pickVoice()?.name ?? 'default', rate: p?.rate ?? SYSTEM_RATE, pitch: p?.pitch ?? 1 }
+}
+
 /** Speaking pace for the system voice. */
 const SYSTEM_RATE = (() => {
   const v = Number(String(import.meta.env.VITE_VOICE_RATE ?? '').trim())
@@ -231,6 +294,13 @@ function pickVoice(): SpeechSynthesisVoice | null {
   if (cachedVoice !== undefined) return cachedVoice
   const all = speechSynthesis.getVoices()
   if (!all.length) return null // not loaded yet — try again next utterance
+
+  // The user's own choice, made by asking him to change his voice.
+  const mine = profile()?.voice
+  if (mine) {
+    const hit = all.find((v) => v.name === mine)
+    if (hit) return (cachedVoice = hit)
+  }
 
   // A voice named in the settings wins over everything else, including an old
   // pick from the V key: VITE_SYSTEM_VOICE=David selects "Microsoft David".
@@ -518,7 +588,8 @@ export function createSpeaker(): Speaker {
     // waiting on it here held each sentence hostage for up to a minute — the
     // assistant went silent. The system voice covers that window instead, and
     // the very next sentence after the model is ready switches over.
-    if (TTS_ENGINE === 'kokoro' && kokoro.isReady()) {
+    // A voice the user chose by name is a system voice, so it wins over Kokoro.
+    if (TTS_ENGINE === 'kokoro' && kokoro.isReady() && !profile()?.voice) {
       diag.engine = 'kokoro'
       return kokoro.speak(text).catch(() => null)
     }
@@ -612,8 +683,10 @@ export function createSpeaker(): Speaker {
       // Brisk and natural by default (it used to be a deliberately slow 0.92,
       // which read as dragging). VITE_VOICE_RATE sets it: 1.0 is the voice's
       // own pace, 1.2 quicker, 0.9 slower.
-      u.rate = SYSTEM_RATE
-      u.pitch = 1
+      // The user's own pace and pitch, if they have asked for them.
+      const mine = profile()
+      u.rate = mine?.rate ?? SYSTEM_RATE
+      u.pitch = mine?.pitch ?? 1
 
       // speechSynthesis exposes no amplitude, so drive the reactor from a
       // synthetic envelope. It only has to look like speech, not match it.

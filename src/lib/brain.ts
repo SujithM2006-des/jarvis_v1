@@ -89,9 +89,22 @@ export function watchCircle(fn: (path: string) => void): void {
   if (usingBridge) bridge.watchCircle(fn)
 }
 
+/** Microphone mute from the popup. Bridge only. */
+export function watchMute(fn: (on: boolean) => void): void {
+  if (usingBridge) bridge.watchMute(fn)
+}
+
 /** The popup's mic button. Bridge only. */
 export function watchMic(fn: () => void): void {
   if (usingBridge) bridge.watchMic(fn)
+}
+
+/** Answer a named request from the bridge (voice-analyze, voice-set). Bridge only. */
+export function handleRequest(
+  kind: string,
+  fn: (msg: Record<string, unknown>) => Promise<Record<string, unknown>>,
+): void {
+  if (usingBridge) bridge.handleRequest(kind, fn)
 }
 
 /** The window's phase, shown on the onscreen popup. Bridge only. */

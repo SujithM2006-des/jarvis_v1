@@ -49,6 +49,9 @@ export type VoiceHandlers = {
   onUtterance: (text: string) => void
   /** The recogniser is unusable. Distinct from the user saying nothing. */
   onError: (message: string) => void
+  /** Muted from the popup: the recogniser is stopped outright — not merely
+   *  ignored — so the microphone is released until this turns false. */
+  paused?: () => boolean
 }
 
 export type Voice = {
@@ -173,7 +176,7 @@ const SELF_GUARD_MS = 350
  */
 // Raised from 250 / 1600 / 6000: with the browser recogniser, natural pauses
 // mid-request were ending the turn, and only a fragment ("while") reached him.
-const SETTLE_MS = 600
+const SETTLE_MS = 900
 /** ...and this long when the sentence is plainly unfinished. */
 const CONTINUE_MS = 2400
 /**
@@ -190,7 +193,8 @@ const MAX_HOLD_MS = 9000
  */
 const END_PAUSE_MS = (() => {
   const v = Number(String(import.meta.env.VITE_END_PAUSE_MS ?? '').trim())
-  return Number.isFinite(v) && v >= 800 && v <= 3000 ? v : 1400
+  // 1800: at 1400 a breath in the middle of a sentence ended it.
+  return Number.isFinite(v) && v >= 800 && v <= 3000 ? v : 1800
 })()
 
 /**
@@ -325,31 +329,51 @@ const STOP = new Set(
  * mangles its own playback badly enough that a substring match rarely holds,
  * but the *words* survive.
  */
+/** Spellings the recogniser and the model disagree on ("OK, sir" heard as "okay sir"). */
+const CANON: Record<string, string> = {
+  okay: 'ok', 'o.k': 'ok', k: 'ok', alright: 'all', yeah: 'yes', yep: 'yes',
+  colour: 'color', mister: 'mr', doctor: 'dr', percent: '%',
+}
+const canon = (w: string) => CANON[w] ?? w
+/** Rough stem, so "opening" matches "open" and "files" matches "file". */
+const stem = (w: string) => (w.length > 4 ? w.replace(/(ing|ed|es|s|ly)$/, '') : w)
+
+/** His filler words: on their own, straight after he spoke, they are him. */
+const HIS_FILLER = new Set(['sir', 'ok', 'very', 'good', 'well', 'indeed', 'certainly', 'right', 'done', 'of', 'course'])
+
 function isEcho(heard: string, spoken: string): boolean {
   if (!spoken) return false
   if (OVERRIDE.test(heard)) return false
 
-  const all = norm(heard).split(' ').filter(Boolean)
+  const all = norm(heard).split(' ').filter(Boolean).map(canon)
   if (!all.length) return true
 
-  const mine = new Set(norm(spoken).split(' '))
+  const mineWords = norm(spoken).split(' ').filter(Boolean).map(canon)
+  const mine = new Set(mineWords)
+  const mineStems = new Set(mineWords.map(stem))
+  const his = (w: string) => mine.has(w) || mineStems.has(stem(w))
   const content = all.filter((w) => !STOP.has(w))
 
   // Nothing distinctive was said at all, so there is no strong evidence either
   // way. Demand a total match before discarding it — the cost of dropping a
   // real question is much higher than the cost of one stray echo getting in.
   if (content.length < 2) {
-    if (all.length < 2) return false
-    return all.every((w) => mine.has(w))
+    // One word on its own: his only if it is his kind of filler and he just
+    // said it ("sir", "okay"). A one-word answer to his question
+    // ("Chrome or Edge?" — "Edge") must still get through.
+    if (all.length < 2) return HIS_FILLER.has(all[0]) && his(all[0])
+    return all.every(his)
   }
 
   let hits = 0
-  for (const w of content) if (mine.has(w)) hits++
-  // Talking over him puts both voices into one transcript. Two distinctive
-  // words he is not saying are the user, however much of him is mixed in —
-  // a ratio alone threw those interruptions away whenever he was loud.
-  if (content.length - hits >= 2) return false
-  return hits / content.length >= 0.6
+  for (const w of content) if (his(w)) hits++
+  // Talking over him puts both voices into one transcript. Plenty of words he
+  // is not saying are the user, however much of him is mixed in. Three, and
+  // at least half: the recogniser mangles a word or two of his own playback
+  // all the time, and two stray words made him answer himself.
+  const novel = content.length - hits
+  if (novel >= 3 && novel / content.length >= 0.5) return false
+  return hits / content.length >= 0.5
 }
 
 // ---------------------------------------------------------------------------
@@ -417,6 +441,18 @@ function vlog(line: string) {
   if (line === lastVlog) return
   lastVlog = line
   console.warn(`[voice] ${line}`)
+  // Also straight to the bridge log (~/.jarvis/jarvis.log): the dev server
+  // only forwards the console while its live-reload link is up, and a missed
+  // or cut-off command is exactly when the trace is needed.
+  try {
+    void fetch(`${BRIDGE_HTTP_URL}/log`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ line: line.slice(0, 400) }),
+    }).catch(() => undefined)
+  } catch {
+    /* no bridge: the console has it */
+  }
 }
 
 if (typeof document !== 'undefined') {
@@ -679,6 +715,19 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
    */
   let consumed = 0
   let seen = 0
+  /**
+   * The result still open (not final) when the last request was taken, and
+   * how many of its words were used. Skipping it whole lost whatever the user
+   * went on to say inside it — "Hey Jarvis, open Chrome" heard as one open
+   * result kept "Hey Jarvis" and dropped the command — so only those words are
+   * skipped, and anything Chrome adds after them is new speech.
+   */
+  let cutIndex = -1
+  let cutWords = 0
+  let openIndex = -1
+  let openWords = 0
+  const words = (s: string) => s.trim().split(/\s+/).filter(Boolean)
+  let lastMode: VoiceMode = 'deaf'
   let lastWake = 0
   let lastAlive = Date.now()
   let silenceTimer: ReturnType<typeof setTimeout> | null = null
@@ -689,6 +738,7 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
       diag.dropped = ''
       diag.accepted++
       diag.holding = ''
+      vlog(`sent: "${text.slice(0, 200)}"`)
       h.onUtterance(text)
     },
     partial: (text) => h.onPartial(text),
@@ -709,7 +759,16 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
     interim = ''
     started = false
     barged = false
-    consumed = seen
+    if (openIndex >= 0) {
+      // Keep reading the open result, past the words already used.
+      consumed = openIndex
+      cutIndex = openIndex
+      cutWords = openWords
+    } else {
+      consumed = seen
+      cutIndex = -1
+      cutWords = 0
+    }
   }
 
   /** Drop his own words from the front of an interruption. */
@@ -727,6 +786,7 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
     bargeEcho = ''
     const mode = h.mode()
     reset()
+    if (text) vlog(`end of phrase [${mode}]: "${text.slice(0, 160)}"`)
     if (!text || mode === 'deaf') return
     if (isEcho(text, speakingNow())) {
       drop('echo of his own voice')
@@ -768,13 +828,35 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
       interim = ''
       return
     }
+    // Woken from outside (the background listener, the mic button): what was
+    // heard while waiting for his name is not part of the command. Drop the
+    // finished phrases; the one still open is where the command begins.
+    if (lastMode === 'wake' && mode !== 'wake') {
+      vlog(`woken from outside: dropping "${settled.trim().slice(-50)}", open result #${openIndex}`)
+      settled = ''
+      consumed = Math.max(consumed, openIndex >= 0 ? openIndex : seen)
+    }
+    lastMode = mode
     let fresh = ''
     interim = ''
     seen = e.results.length
+    openIndex = -1
+    openWords = 0
     for (let i = Math.max(e.resultIndex, consumed); i < e.results.length; i++) {
-      const chunk = e.results[i][0].transcript as string
-      if (e.results[i].isFinal) fresh += chunk
-      else interim += chunk
+      const raw = e.results[i][0].transcript as string
+      let chunk = raw
+      if (i === cutIndex && cutWords) {
+        const rest = words(raw).slice(cutWords).join(' ')
+        chunk = rest ? ` ${rest}` : ''
+      }
+      // Joined with a space: Chrome does not always lead a new result with
+      // one, and "to" + "amma" became "toamma".
+      if (e.results[i].isFinal) fresh += ` ${chunk}`
+      else {
+        interim += ` ${chunk}`
+        openIndex = i
+        openWords = words(raw).length
+      }
     }
     const heard = `${settled}${fresh} ${interim}`.replace(/\s+/g, ' ').trim()
     if (!heard) return
@@ -789,9 +871,35 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
         lastWake = Date.now()
         diag.wakes++
         vlog(`WAKE on "${heard.slice(-60)}"`)
-        const trailing = afterWake(heard)
+        // What followed his name is the start of the command, not the whole
+        // of it: sent straight away, "Hey Jarvis, open Chrome and…" went out
+        // as "open". Keep listening instead, and let endpointing decide when
+        // the sentence is finished.
+        const finals = `${settled}${fresh}`
+        const inOpen = WAKE.test(interim)
+        const carried = inOpen ? '' : afterWake(finals)
+        const tailOpen = inOpen ? afterWake(interim) : interim.trim()
+        const openUsed = inOpen ? words(interim).length - words(tailOpen).length : 0
+        // Words of the open result already skipped before this (an earlier cut).
+        const prevCut = cutIndex === openIndex && openIndex >= 0 ? cutWords : 0
         reset()
-        h.onWake(trailing)
+        if (openIndex >= 0) {
+          // Of the open result, only the words up to his name are used.
+          cutWords = Math.max(0, Math.min(openWords, prevCut + openUsed))
+        }
+        h.onWake('')
+        // Woken here, by his name: what follows it is the command, so the
+        // wake-to-command clean-up in the next result must not run.
+        lastMode = 'command'
+        settled = carried ? `${carried} ` : ''
+        interim = tailOpen
+        if (carried || tailOpen) {
+          // Already talking: count the command as begun.
+          started = true
+          h.onSpeechStart()
+          h.onPartial(`${carried} ${tailOpen}`.trim())
+          bumpSilence()
+        }
       } else {
         // A finished phrase that was not his name: say what it was, so a
         // missed "Hey Jarvis" shows up in the log as whatever Chrome heard.
@@ -826,10 +934,13 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
           // Only while he is making sound, though: thinking in silence there is
           // no playback to mistake for the user, and a one-word continuation
           // of the request ("…delete") must count, or it is simply lost.
-          if (words < 2 && speakingNow()) return
+          // Three while his voice is in the room: his own playback, misheard,
+          // easily makes two words that are not quite his.
+          if (words < 3 && speakingNow()) return
         }
       }
       started = true
+      vlog(`speech started [${mode}]: "${full.slice(0, 80)}"`)
       if (mode === 'guard') {
         barged = true
         bargeEcho = speakingNow()
@@ -847,6 +958,11 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
 
   const spin = () => {
     if (stopped || running) return
+    // Muted: start nothing, and look again shortly.
+    if (h.paused?.()) {
+      setTimeout(spin, 400)
+      return
+    }
     rec = new Ctor()
     rec.continuous = true
     rec.interimResults = true
@@ -855,6 +971,10 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
       // A fresh session numbers its results from zero again.
       consumed = 0
       seen = 0
+      cutIndex = -1
+      cutWords = 0
+      openIndex = -1
+      openWords = 0
       running = true
       diag.running = true
       diag.sessions++
@@ -909,6 +1029,19 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
   // gone quiet on us — tear it down and build a fresh one.
   const health = setInterval(() => {
     if (stopped) return
+    // Muted: close a running recogniser (and with it the microphone), and
+    // don't count the silence as a fault.
+    if (h.paused?.()) {
+      if (rec) {
+        try {
+          rec.abort()
+        } catch {
+          /* already gone */
+        }
+      }
+      touch()
+      return
+    }
     const idle = Date.now() - lastAlive
     diag.idleMs = idle
     // 45s, not 15: in a quiet room Chrome legitimately reports nothing, and
@@ -930,10 +1063,24 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
     spin()
   }, 5000)
 
+  // Mute takes hold within a third of a second: the recogniser is closed and
+  // whatever was half-heard is thrown away.
+  const mutePoll = setInterval(() => {
+    if (stopped || !h.paused?.() || !rec) return
+    try {
+      rec.abort()
+    } catch {
+      /* already gone */
+    }
+    reset()
+    assemble.cancel()
+  }, 300)
+
   return {
     stop: () => {
       stopped = true
       clearInterval(health)
+      clearInterval(mutePoll)
       document.removeEventListener('visibilitychange', onVisible)
       clearSilence()
       assemble.cancel()

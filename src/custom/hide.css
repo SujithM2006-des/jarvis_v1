@@ -1,0 +1,15 @@
+/* Stock parts a custom layout replaces, by name. CustomLayout.tsx lists them in
+   its `hide` export; App.tsx turns each into a cl-hide-* class on <html>, and
+   LayoutBoundary removes them all if the layout fails — so whatever happens,
+   something is always on screen. Not written by JARVIS. */
+
+html.cl-hide-frame .corner { display: none !important; }
+html.cl-hide-header .hud-top { display: none !important; }
+html.cl-hide-telemetry .tl-col { display: none !important; }
+html.cl-hide-dock .tl-dock { display: none !important; }
+html.cl-hide-suggestions .suggest { display: none !important; }
+html.cl-hide-caption .caption { display: none !important; }
+html.cl-hide-scanlines body::after { display: none !important; }
+html.cl-hide-scene .scene { opacity: 0 !important; pointer-events: none !important; }
+html.cl-hide-transcript .log { display: none !important; }
+html.cl-hide-hints .hud-bottom { display: none !important; }

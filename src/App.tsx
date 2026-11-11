@@ -6,7 +6,14 @@ import { Ignition } from './ui/Ignition'
 import { Diagnostics } from './ui/Diagnostics'
 import { useStore } from './store'
 import { startVoice, type Voice, type VoiceMode } from './lib/voice'
-import { createSpeaker, cycleVoice, currentVoiceName } from './lib/tts'
+import { createSpeaker, cycleVoice, currentVoiceName, listVoices, setVoiceProfile } from './lib/tts'
+import { analyseVoice } from './lib/voiceprint'
+import CustomLayout, { hide as hiddenParts } from './custom/CustomLayout'
+import { LayoutBoundary } from './custom/LayoutBoundary'
+import type { ComponentType } from 'react'
+
+/** The custom layout, or null for the stock look (its default export is null then). */
+const Layout = CustomLayout as ComponentType | null
 import * as sfx from './lib/sfx'
 import * as music from './lib/music'
 import * as hands from './lib/hands'
@@ -28,9 +35,11 @@ import {
   watchRemoteWake,
   watchPopupAsk,
   watchMic,
+  watchMute,
   watchCircle,
   reportPhase,
   reportPartial,
+  handleRequest,
   watchConnection,
   connectedLabels,
   usingBridge,
@@ -78,6 +87,9 @@ const POPUP_ON =
   /\b(turn\s+on|switch\s+on|open|show|start|enable|launch)\s+(the\s+)?(on\s*-?\s*screen|onscreen|pop\s*-?\s*up|popup|mini)(\s+mode)?(\s+jarvis)?\b/i
 const POPUP_OFF =
   /\b(turn\s+off|switch\s+off|close|hide|stop|disable)\s+(the\s+)?(on\s*-?\s*screen|onscreen|pop\s*-?\s*up|popup|mini)(\s+mode)?(\s+jarvis)?\b/i
+/** "Mute the microphone" — the popup's mute, by voice. Unmuting is the button
+ *  (or the mic button): once muted, nothing spoken is heard. */
+const MUTE_MIC = /\b(mute|turn\s+off|switch\s+off|disable)\s+(the\s+|my\s+|your\s+)?(mic|microphone)\b/i
 /** "Circle to search" — the screen overlay (scripts/circle.ps1). */
 const CIRCLE = /\bcircle\s+(to|and|n)?\s*search\b|\bcircle\s+something\b/i
 
@@ -294,6 +306,7 @@ export default function App() {
 
   /** What the voice loop should do with what it hears, derived from phase. */
   const mode = (): VoiceMode => {
+    if (muted.current) return 'deaf'
     switch (store.getState().phase) {
       case 'offline':
       case 'boot':
@@ -317,6 +330,8 @@ export default function App() {
   const lastWakeAt = useRef(0)
   const WAKE_DEDUP_MS = 2500
   const greetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Microphone muted from the popup: deaf, recogniser stopped. */
+  const muted = useRef(false)
   const GREETING_DELAY_MS = 1500
 
   const onWake = (trailing: string) => {
@@ -466,6 +481,22 @@ export default function App() {
       return
     }
 
+    // "Mute the microphone": confirmed, then deaf until unmuted from the popup.
+    if (MUTE_MIC.test(said) && said.split(/\s+/).length <= 8) {
+      console.warn(`[voice] mute on "${said}"`)
+      const s = createSpeaker()
+      speaker.current = s
+      s.say("Microphone muted, sir. Unmute me from the panel when you need me.")
+      void s.end()
+      void fetch(`${BRIDGE_HTTP_URL}/popup/mute`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ on: true }),
+      }).catch(() => undefined)
+      goDormant()
+      return
+    }
+
     // Desktop commands, also handled here so they work instantly and reliably.
     const short = said.split(/\s+/).length <= 8
     if (short && (POPUP_ON.test(said) || POPUP_OFF.test(said) || CIRCLE.test(said))) {
@@ -606,6 +637,24 @@ export default function App() {
       }
     })
 
+    // Customising his voice, on request (bridge/customize.mjs): measure a
+    // recording the user gave, and apply the voice he chose to match it.
+    handleRequest('voice-analyze', async (msg) => {
+      const { features, suggestion } = await analyseVoice(String(msg.data ?? ''))
+      return { features, suggestion, voices: listVoices() }
+    })
+    handleRequest('voice-set', async (msg) => {
+      const r = msg.reset
+        ? setVoiceProfile(null)
+        : setVoiceProfile({
+            voice: (msg.voice as string | null) ?? null,
+            rate: (msg.rate as number | null) ?? null,
+            pitch: (msg.pitch as number | null) ?? null,
+          })
+      console.warn(`[voice] voice profile -> ${JSON.stringify(r)}`)
+      return r as Record<string, unknown>
+    })
+
     // Reminders and timers: spoken the moment they fall due, unasked. A fresh
     // speaker held in the same slot as any other line, so saying "stop" or
     // starting to talk cuts it off like anything else he says.
@@ -626,6 +675,17 @@ export default function App() {
 
     // The popup's mic button: a toggle. Listening already → standby;
     // otherwise listen now, cutting through anything he is saying or doing.
+    // The popup's mute: nothing is heard until unmuted. Listening stops at once
+    // (quietly — no "standing by"); an answer already being spoken finishes.
+    watchMute((on) => {
+      if (muted.current === on) return
+      muted.current = on
+      console.warn(`[voice] microphone ${on ? 'muted' : 'unmuted'}`)
+      store.getState().setCaption('')
+      const phase = store.getState().phase
+      if (on && (phase === 'listening' || phase === 'waking')) goDormant()
+    })
+
     watchMic(() => {
       const phase = store.getState().phase
       if (phase === 'offline' || phase === 'boot') return
@@ -775,6 +835,7 @@ export default function App() {
       onPartial,
       onUtterance,
       onError: onVoiceError,
+      paused: () => muted.current,
     })
 
     store.getState().setPhase('dormant')
@@ -978,9 +1039,23 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // A custom layout, written by JARVIS on request from a picture: drawn over
+  // the scene and under the HUD's live parts (panels, blades, transcript),
+  // with the stock parts it replaces hidden by name.
+  useEffect(() => {
+    const root = document.documentElement
+    for (const c of [...root.classList]) if (c.startsWith('cl-hide-')) root.classList.remove(c)
+    if (Layout) for (const part of hiddenParts) root.classList.add(`cl-hide-${part}`)
+  }, [])
+
   return (
     <>
       <Scene />
+      {Layout && (
+        <LayoutBoundary>
+          <Layout />
+        </LayoutBoundary>
+      )}
       <Hud />
       <Boot />
       <Diagnostics />

@@ -29,6 +29,7 @@ import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, relative, resolve as resolvePath, sep } from 'node:path'
 import { blockedAddress, vetTarget } from './net.mjs'
 import { PC_WRITE_TOOLS } from './pc.mjs'
+import { CUSTOM_WRITE_TOOLS } from './customize.mjs'
 import { WHATSAPP_WRITE_TOOLS } from './whatsapp.mjs'
 
 /**
@@ -165,6 +166,11 @@ export function decideTool(name, allowWrites = false) {
     // Memory, reminders and weather. Scheduling a WhatsApp message checks
     // allowWrites inside the tool itself.
     if (server === 'jarvis_assistant') return true
+
+    // Customising his own look and voice. Restyling writes a stylesheet into
+    // the project, so it needs allowWrites; measuring a recording and setting
+    // the voice only touch the browser's own settings.
+    if (server === 'jarvis_custom') return CUSTOM_WRITE_TOOLS.has(tool) ? allowWrites : true
 
     // WhatsApp: opening, searching and reading run freely; sending needs allowWrites.
     if (server === 'jarvis_whatsapp') return WHATSAPP_WRITE_TOOLS.has(tool) ? allowWrites : true

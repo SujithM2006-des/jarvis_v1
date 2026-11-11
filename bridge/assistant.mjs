@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { ps } from './pc.mjs'
+import { forgetHistory, searchHistory } from './journal.mjs'
 
 /**
  * JARVIS as a personal assistant: long-term memory, reminders and timers,
@@ -317,11 +318,15 @@ export function assistantServer({ allowWrites }) {
         async ({ matching }) => {
           const m = matching.toLowerCase().trim()
           if (!m) return fail('Say what to forget.')
+          // The conversation history too: "forget what I said about X" should
+          // not leave X sitting in the journal to come back next session.
+          const fromHistory = forgetHistory(m)
+          const historyNote = fromHistory ? ` Also removed ${fromHistory} past exchange(s) mentioning it.` : ''
           let text = ''
           try {
             text = readFileSync(MEMORY, 'utf8')
           } catch {
-            return ok('There is nothing remembered.')
+            return ok(`There are no remembered facts.${historyNote}`)
           }
           const removed = []
           const kept = text.split(/\r?\n/).filter((l) => {
@@ -329,9 +334,25 @@ export function assistantServer({ allowWrites }) {
             if (hit) removed.push(l.trim().slice(2))
             return !hit
           })
-          if (!removed.length) return ok(`Nothing remembered mentions "${matching}".`)
+          if (!removed.length) return ok(`No remembered fact mentions "${matching}".${historyNote}`)
           writeSafe(MEMORY, kept.join('\n'))
-          return ok(`Forgot: ${removed.join(' | ')}`)
+          return ok(`Forgot: ${removed.join(' | ')}.${historyNote}`)
+        },
+      ),
+      tool(
+        'search_history',
+        'Search everything the user and you have said and done in past conversations, kept ' +
+          'across restarts. Use for "what did I ask you yesterday", "what was that file you ' +
+          'saved", "what did we talk about last week", or whenever they refer to something ' +
+          'earlier that is not in your recent conversations. Keywords, not a sentence. ' +
+          'Leave query empty to get the latest exchanges.',
+        {
+          query: z.string().describe('Keywords, e.g. "eclipse palindrome", "pdf abstract".'),
+          days: z.number().optional().describe('Only the last N days.'),
+        },
+        async ({ query, days }) => {
+          const hits = searchHistory(query, { days })
+          return ok(hits.length ? hits.join('\n') : `Nothing in past conversations matches "${query}".`)
         },
       ),
       tool(

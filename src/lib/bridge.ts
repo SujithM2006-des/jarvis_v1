@@ -83,6 +83,14 @@ export function watchCapture(fn: (req: CaptureRequest) => Promise<CaptureResult>
   onCapture = fn
 }
 
+/** Other requests the bridge makes of us by name (voice-analyze, voice-set):
+ *  answered against the request's id, like a camera frame. */
+type RequestHandler = (msg: Record<string, unknown>) => Promise<Record<string, unknown>>
+const requestHandlers = new Map<string, RequestHandler>()
+export function handleRequest(kind: string, fn: RequestHandler) {
+  requestHandlers.set(kind, fn)
+}
+
 /** Blades arrive the same way panels do — pushed mid-turn, so the article is
  *  already open as he starts the sentence about it. */
 let onBlade: ((blade: Blade) => void) | null = null
@@ -128,6 +136,12 @@ export function watchCircle(fn: (path: string) => void) {
 let onMic: (() => void) | null = null
 export function watchMic(fn: () => void) {
   onMic = fn
+}
+
+/** Microphone muted or unmuted from the popup (also sent on every connect). */
+let onMute: ((on: boolean) => void) | null = null
+export function watchMute(fn: (on: boolean) => void) {
+  onMute = fn
 }
 
 /** Tell the bridge the window's phase, which the onscreen popup displays. */
@@ -221,6 +235,16 @@ function dispatch(ws: WebSocket) {
       onPanel?.(msg.panel)
     } else if (msg.type === 'blade' && msg.blade) {
       onBlade?.(msg.blade)
+    } else if (requestHandlers.has(msg.type as string) && (msg as { id?: unknown }).id) {
+      const raw = msg as unknown as Record<string, unknown>
+      const id = String(raw.id)
+      const fn = requestHandlers.get(msg.type as string)!
+      // Always answers, so the bridge never holds a turn open waiting.
+      fn(raw)
+        .catch((err: Error) => ({ error: err?.message ?? String(err) }))
+        .then((payload) => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'reply', id, ...payload }))
+        })
     } else if (msg.type === 'capture' && msg.id) {
       const id = msg.id
       const reply = (payload: Record<string, unknown>) => {
@@ -251,6 +275,8 @@ function dispatch(ws: WebSocket) {
       onRemoteWake?.()
     } else if ((msg.type as string) === 'mic') {
       onMic?.()
+    } else if ((msg.type as string) === 'mute') {
+      onMute?.(Boolean((msg as unknown as { on?: unknown }).on))
     } else if ((msg.type as string) === 'popup-ask') {
       const text = String((msg as unknown as { text?: unknown }).text ?? '').trim()
       if (text) onPopupAsk?.(text)

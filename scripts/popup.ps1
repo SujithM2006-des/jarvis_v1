@@ -15,7 +15,7 @@ $bridge = 'http://127.0.0.1:8787'
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="JARVIS onscreen" Width="580" Height="192" WindowStyle="None"
         AllowsTransparency="True" Background="Transparent" Topmost="True"
-        ShowInTaskbar="False" ResizeMode="NoResize" MinWidth="580" MinHeight="192" MaxWidth="580" MaxHeight="192">
+        ShowInTaskbar="False" AllowDrop="True" ResizeMode="NoResize" MinWidth="580" MinHeight="192" MaxWidth="580" MaxHeight="192">
   <!-- Resizable from every edge and corner despite having no frame. -->
   <WindowChrome.WindowChrome>
     <WindowChrome ResizeBorderThickness="0" CaptionHeight="0" CornerRadius="16" GlassFrameThickness="0" UseAeroCaptionButtons="False"/>
@@ -40,7 +40,7 @@ $bridge = 'http://127.0.0.1:8787'
     <Border.Effect><DropShadowEffect BlurRadius="24" ShadowDepth="0" Color="#19D8D2" Opacity="0.35"/></Border.Effect>
     <Grid>
       <Grid.RowDefinitions>
-        <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
       </Grid.RowDefinitions>
       <Grid Grid.Row="0" x:Name="Header" Background="Transparent" Margin="0,0,0,8">
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -57,19 +57,39 @@ $bridge = 'http://127.0.0.1:8787'
         <StackPanel>
           <TextBlock x:Name="Heard" TextWrapping="Wrap" Foreground="#7FB6BF" FontFamily="Segoe UI" FontSize="12" Margin="0,0,0,6"/>
           <TextBlock x:Name="Said" TextWrapping="Wrap" Foreground="#E6FBFF" FontFamily="Segoe UI" FontSize="14"
-                     Text="Say &quot;Hey Jarvis&quot;, type below, or circle something on screen."/>
+                     Text="Say &quot;Hey Jarvis&quot;, type below, attach or drop a file, or circle something on screen."/>
         </StackPanel>
       </ScrollViewer>
-      <Grid Grid.Row="2" Margin="0,10,0,0">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <!-- Files waiting to be sent: names, and a cross to drop them. -->
+      <Grid Grid.Row="2" x:Name="AttachRow" Visibility="Collapsed" Margin="0,6,0,0">
+        <TextBlock x:Name="AttachList" Foreground="#9FD8DC" FontFamily="Segoe UI" FontSize="11.5"
+                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,26,0"/>
+        <Button x:Name="AttachClear" Content="✕" HorizontalAlignment="Right" Width="20" Height="20" FontSize="10"
+                Foreground="#9FD8DC" Background="Transparent" BorderThickness="0" Cursor="Hand" ToolTip="Remove the attachments"/>
+      </Grid>
+      <Grid Grid.Row="3" Margin="0,8,0,0">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <Button x:Name="Circle" Grid.Column="0" Content="◯" Width="34" Height="32" FontSize="15" Margin="0,0,8,0"
                 Foreground="#19D8D2" Background="#2219D8D2" BorderBrush="#5519D8D2" Cursor="Hand" ToolTip="Circle to search"/>
         <Button x:Name="Mic" Grid.Column="1" Content="&#xE720;" FontFamily="Segoe MDL2 Assets" Width="34" Height="32" FontSize="15" Margin="0,0,8,0"
                 Foreground="#19D8D2" Background="#2219D8D2" BorderBrush="#5519D8D2" Cursor="Hand"
                 ToolTip="Talk to JARVIS (tap again to put him on standby)"/>
-        <TextBox x:Name="Input" Grid.Column="2" Height="32" Padding="8,6" FontFamily="Segoe UI" FontSize="13"
+        <!-- Mute: a microphone with a slash; red while muted. -->
+        <Button x:Name="Mute" Grid.Column="2" Width="34" Height="32" Margin="0,0,8,0"
+                Background="#2219D8D2" BorderBrush="#5519D8D2" Cursor="Hand" ToolTip="Mute the microphone">
+          <Grid>
+            <TextBlock x:Name="MuteGlyph" Text="&#xE720;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="#19D8D2"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <Line x:Name="MuteSlash" X1="0" Y1="0" X2="16" Y2="16" Stroke="#19D8D2" StrokeThickness="2"
+                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Grid>
+        </Button>
+        <Button x:Name="Attach" Grid.Column="3" Content="&#xE723;" FontFamily="Segoe MDL2 Assets" Width="34" Height="32" FontSize="15" Margin="0,0,8,0"
+                Foreground="#19D8D2" Background="#2219D8D2" BorderBrush="#5519D8D2" Cursor="Hand"
+                ToolTip="Attach documents or images (or drop them here, or paste with Ctrl+V)"/>
+        <TextBox x:Name="Input" Grid.Column="4" Height="32" Padding="8,6" FontFamily="Segoe UI" FontSize="13"
                  Foreground="#E6FBFF" CaretBrush="#19D8D2" Background="#14FFFFFF" BorderBrush="#3319D8D2"/>
-        <Button x:Name="Send" Grid.Column="3" Content="➤" Width="34" Height="32" FontSize="14" Margin="8,0,0,0"
+        <Button x:Name="Send" Grid.Column="5" Content="➤" Width="34" Height="32" FontSize="14" Margin="8,0,0,0"
                 Foreground="#02121A" Background="#19D8D2" BorderThickness="0" Cursor="Hand" ToolTip="Send"/>
       </Grid>
     </Grid>
@@ -80,7 +100,7 @@ $bridge = 'http://127.0.0.1:8787'
 
 $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
 $el = @{}
-foreach ($n in 'Header', 'Dot', 'Status', 'Close', 'Scroll', 'Heard', 'Said', 'Circle', 'Mic', 'Input', 'Send', 'Panel', 'Notch', 'NotchDot') { $el[$n] = $win.FindName($n) }
+foreach ($n in 'Header', 'Dot', 'Status', 'Close', 'Scroll', 'Heard', 'Said', 'Circle', 'Mic', 'Mute', 'MuteGlyph', 'MuteSlash', 'Attach', 'AttachRow', 'AttachList', 'AttachClear', 'Input', 'Send', 'Panel', 'Notch', 'NotchDot') { $el[$n] = $win.FindName($n) }
 $brush = { param($hex) (New-Object System.Windows.Media.BrushConverter).ConvertFromString($hex) }
 $micIdle = & $brush '#2219D8D2'
 $micLive = & $brush '#19D8D2'
@@ -160,7 +180,7 @@ $clickTimer.Interval = [TimeSpan]::FromMilliseconds(100)
 $clickTimer.Add_Tick({
   $l = [JarvisPopup.Keys]::GetAsyncKeyState(0x01)
   $r = [JarvisPopup.Keys]::GetAsyncKeyState(0x02)
-  if ($script:collapsed) { return }
+  if ($script:collapsed -or $script:modal) { return }
   if ((($l -bor $r) -band 0x8001) -and -not (Test-MouseOver)) { Collapse-Panel }
 })
 
@@ -185,24 +205,186 @@ $win.Add_Closing({
 $el.Header.Add_MouseLeftButtonDown({ $win.DragMove() })
 $el.Close.Add_Click({ $win.Close() })
 
-function Post([string]$path, $body) {
+function Post([string]$path, $body, [int]$timeout = 3) {
   try {
     $json = if ($body) { $body | ConvertTo-Json -Compress } else { '{}' }
-    Invoke-RestMethod -Method Post -Uri "$bridge$path" -Body $json -ContentType 'application/json' -TimeoutSec 3 | Out-Null
+    # UTF-8 bytes: a file or folder name with non-ASCII characters must survive.
+    $bytes = [Text.Encoding]::UTF8.GetBytes($json)
+    Invoke-RestMethod -Method Post -Uri "$bridge$path" -Body $bytes -ContentType 'application/json; charset=utf-8' -TimeoutSec $timeout | Out-Null
     return $true
   } catch { return $false }
 }
 
+# --- attachments --------------------------------------------------------------
+# Documents and images for him to work with: the paperclip, drag and drop onto
+# the panel (or the notch), or Ctrl+V with a screenshot or copied files.
+$script:files = New-Object System.Collections.ArrayList
+$script:modal = $false
+
+function Update-Attach {
+  if ($script:files.Count) {
+    $names = ($script:files | ForEach-Object { [IO.Path]::GetFileName($_) }) -join '  ·  '
+    $el.AttachList.Text = [char]::ConvertFromUtf32(0x1F4CE) + " $names"
+    $el.AttachList.ToolTip = ($script:files -join "`n")
+    $el.AttachRow.Visibility = 'Visible'
+  } else {
+    $el.AttachRow.Visibility = 'Collapsed'
+  }
+}
+
+function Add-Files($paths) {
+  foreach ($f in @($paths)) {
+    $f = "$f"
+    if ($f -and (Test-Path -LiteralPath $f -PathType Leaf) -and -not $script:files.Contains($f) -and $script:files.Count -lt 10) {
+      [void]$script:files.Add($f)
+    }
+  }
+  Update-Attach
+}
+
+$el.AttachClear.Add_Click({ $script:files.Clear(); Update-Attach })
+
+$el.Attach.Add_Click({
+  $script:modal = $true
+  try {
+    $dlg = New-Object Microsoft.Win32.OpenFileDialog
+    $dlg.Title = 'Give JARVIS documents or images'
+    $dlg.Multiselect = $true
+    $dlg.Filter = 'Documents, images and voice clips|*.mp3;*.wav;*.m4a;*.ogg;*.flac;*.webm;*.pdf;*.docx;*.pptx;*.xlsx;*.txt;*.md;*.csv;*.json;*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp;*.py;*.java;*.c;*.cpp;*.js;*.ts;*.html;*.css|All files|*.*'
+    if ($dlg.ShowDialog($win)) { Add-Files $dlg.FileNames }
+  } finally {
+    $script:modal = $false
+    # The clicks made inside the dialog are not clicks away from the panel.
+    [void][JarvisPopup.Keys]::GetAsyncKeyState(0x01); [void][JarvisPopup.Keys]::GetAsyncKeyState(0x02)
+    $script:idleSince = Get-Date
+  }
+  $el.Input.Focus() | Out-Null
+})
+
+# Drag and drop. Preview events, so the text box doesn't swallow the drop.
+$win.Add_PreviewDragOver({
+  $_.Effects = if ($_.Data.GetDataPresent([Windows.DataFormats]::FileDrop)) { 'Copy' } else { 'None' }
+  $_.Handled = $true
+})
+$win.Add_PreviewDrop({
+  if ($_.Data.GetDataPresent([Windows.DataFormats]::FileDrop)) {
+    Add-Files ($_.Data.GetData([Windows.DataFormats]::FileDrop))
+    $_.Handled = $true
+    Expand-Panel
+    $script:idleSince = Get-Date
+    $win.Activate() | Out-Null
+    $el.Input.Focus() | Out-Null
+  }
+})
+
+# Ctrl+V: copied files, or a screenshot (Win+Shift+S) saved as a PNG.
+$el.Input.Add_PreviewKeyDown({
+  if ($_.Key -eq 'V' -and ([Windows.Input.Keyboard]::Modifiers -band [Windows.Input.ModifierKeys]::Control)) {
+    if ([Windows.Clipboard]::ContainsFileDropList()) {
+      Add-Files ([Windows.Clipboard]::GetFileDropList())
+      $_.Handled = $true
+    } elseif ([Windows.Clipboard]::ContainsImage()) {
+      $png = Join-Path $env:TEMP ("jarvis-paste-{0:yyyyMMdd-HHmmss}.png" -f (Get-Date))
+      $enc = New-Object System.Windows.Media.Imaging.PngBitmapEncoder
+      $enc.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create([Windows.Clipboard]::GetImage()))
+      $fs = [IO.File]::Create($png)
+      try { $enc.Save($fs) } finally { $fs.Close() }
+      Add-Files $png
+      $_.Handled = $true
+    }
+  }
+})
+
+# --- request history ----------------------------------------------------------
+# Up and Down in the box step through earlier requests, like a chat box in an
+# editor: Up for older, Down for newer, and past the newest back to whatever
+# was being typed. Drawn from the conversation journal (~/.jarvis/history.jsonl),
+# so it includes spoken requests and survives restarts.
+$historyFile = Join-Path $env:USERPROFILE '.jarvis\history.jsonl'
+$script:hist = @()
+$script:histIdx = -1
+$script:draft = ''
+$script:lastSent = ''
+
+function Load-History {
+  $list = New-Object System.Collections.ArrayList
+  try {
+    foreach ($line in (Get-Content -LiteralPath $historyFile -Tail 400 -Encoding UTF8 -ErrorAction Stop)) {
+      try { $u = ($line | ConvertFrom-Json).user } catch { continue }
+      if (-not $u -or $u -like '(Circle to Search*') { continue }
+      # Attached files were listed as " 📎 name, name" — keep the words only.
+      $u = ($u -replace '\s*\uD83D\uDCCE.*$', '').Trim()
+      if ($u -and ($list.Count -eq 0 -or $list[$list.Count - 1] -ne $u)) { [void]$list.Add($u) }
+    }
+  } catch {}
+  # Something just sent may not be in the journal yet (it is written when the
+  # answer finishes).
+  if ($script:lastSent -and ($list.Count -eq 0 -or $list[$list.Count - 1] -ne $script:lastSent)) {
+    [void]$list.Add($script:lastSent)
+  }
+  $script:hist = @($list)
+}
+
+function Show-History([string]$text) {
+  $el.Input.Text = $text
+  $el.Input.CaretIndex = $text.Length
+}
+
+$el.Input.Add_PreviewKeyDown({
+  if ($_.Key -eq 'Up') {
+    if ($script:histIdx -lt 0) {
+      Load-History
+      if (-not $script:hist.Count) { return }
+      $script:draft = $el.Input.Text
+      $script:histIdx = $script:hist.Count - 1
+    } elseif ($script:histIdx -gt 0) {
+      $script:histIdx--
+    }
+    Show-History $script:hist[$script:histIdx]
+    $_.Handled = $true
+  } elseif ($_.Key -eq 'Down') {
+    if ($script:histIdx -lt 0) { return }
+    if ($script:histIdx -lt $script:hist.Count - 1) {
+      $script:histIdx++
+      Show-History $script:hist[$script:histIdx]
+    } else {
+      $script:histIdx = -1
+      Show-History $script:draft
+    }
+    $_.Handled = $true
+  } elseif ($_.Key -eq 'Escape' -and $script:histIdx -ge 0) {
+    $script:histIdx = -1
+    Show-History $script:draft
+    $_.Handled = $true
+  }
+})
+
 function Send-Input {
   $text = $el.Input.Text.Trim()
-  if (-not $text) { return }
-  if (Post '/popup/ask' @{ text = $text }) { $el.Input.Text = '' }
-  else { $el.Status.Text = '  ·  JARVIS is not running' }
+  if (-not $text -and -not $script:files.Count) { return }
+  $body = @{ text = $text }
+  if ($script:files.Count) { $body.files = @($script:files.ToArray()) }
+  # Longer wait with files: the bridge copies them and extracts Office text first.
+  $timeout = if ($script:files.Count) { 90 } else { 3 }
+  if (Post '/popup/ask' $body $timeout) {
+    if ($text) { $script:lastSent = $text }
+    $script:histIdx = -1
+    $script:draft = ''
+    $el.Input.Text = ''
+    $script:files.Clear(); Update-Attach
+  } else { $el.Status.Text = '  ·  JARVIS is not running' }
 }
 $el.Send.Add_Click({ Send-Input })
 $el.Input.Add_KeyDown({ if ($_.Key -eq 'Return') { Send-Input } })
 $el.Circle.Add_Click({ Post '/circle' $null | Out-Null })
 # Mic: listen now (like "Hey Jarvis"); tapped while listening, standby.
+# Mute: the microphone off for JARVIS (this window and the background "Hey
+# Jarvis" listener) until tapped again. The mic button also unmutes.
+$muteOn = & $brush '#E0465A'
+$muteFg = & $brush '#02121A'
+$el.Mute.Add_Click({
+  if (-not (Post '/popup/mute' $null)) { $el.Status.Text = '  ·  JARVIS is not running' }
+})
 $el.Mic.Add_Click({
   if (-not (Post '/popup/mic' $null)) { $el.Status.Text = '  ·  JARVIS is not running' }
 })
@@ -229,7 +411,7 @@ $timer.Add_Tick({
       $el.NotchDot.Opacity = if ($active) { 1 } else { 0.5 }
       if ($rising) { Expand-Panel }
     } else {
-      $busyHere = (Test-MouseOver) -or $el.Input.IsKeyboardFocused -or $el.Input.Text
+      $busyHere = (Test-MouseOver) -or $el.Input.IsKeyboardFocused -or $el.Input.Text -or $script:files.Count -or $script:modal
       if ($env:JARVIS_POPUP_DEBUG -eq '1') {
         Add-Content -Path (Join-Path $env:TEMP 'jarvis-popup-debug.log') -Value (
           "{0:HH:mm:ss} phase={1} active={2} mouseOver={3} kbFocus={4} text='{5}' idle={6:N1}s cursor={7} win=({8:N0},{9:N0} {10:N0}x{11:N0})" -f
@@ -244,6 +426,13 @@ $timer.Add_Tick({
     $live = $s.phase -in 'listening', 'waking'
     $el.Mic.Background = if ($live) { $micLive } else { $micIdle }
     $el.Mic.Foreground = if ($live) { $micLiveFg } else { $micIdleFg }
+    # The mute button turns red while muted, and the status says so.
+    $isMuted = [bool]$s.muted
+    $el.Mute.Background = if ($isMuted) { $muteOn } else { $micIdle }
+    $fg = if ($isMuted) { $muteFg } else { $micIdleFg }
+    $el.MuteGlyph.Foreground = $fg; $el.MuteSlash.Stroke = $fg
+    $el.Mute.ToolTip = if ($isMuted) { 'Unmute the microphone' } else { 'Mute the microphone' }
+    if ($isMuted) { $el.Status.Text = '  ·  muted' }
     $key = "$($s.heard)|$($s.said)"
     if ($key -ne $last) {
       $last = $key
