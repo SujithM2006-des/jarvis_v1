@@ -151,6 +151,76 @@ export function useMuted(): boolean {
   return m
 }
 
+/** A calendar event: a reminder, pending or already past. */
+export type CalEvent = { id: string; at: string; text: string; kind: string; repeat: string | null; done: boolean }
+
+let scheduleBump = 0
+const scheduleSubs = new Set<() => void>()
+const bumpSchedule = () => {
+  scheduleBump++
+  scheduleSubs.forEach((f) => f())
+}
+
+/** Every calendar event (refreshed every 30 s, and at once after a change). */
+export function useSchedule(): CalEvent[] {
+  const [events, set] = useState<CalEvent[]>([])
+  const [bump, setBump] = useState(scheduleBump)
+  useEffect(() => {
+    const f = () => setBump(scheduleBump)
+    scheduleSubs.add(f)
+    return () => {
+      scheduleSubs.delete(f)
+    }
+  }, [])
+  useEffect(() => {
+    let alive = true
+    const pull = async () => {
+      try {
+        const res = await fetch(`${BRIDGE_HTTP_URL}/schedule`, { cache: 'no-store' })
+        if (res.ok && alive) set((await res.json()).events ?? [])
+      } catch {
+        /* bridge down: keep the last list */
+      }
+    }
+    void pull()
+    const id = window.setInterval(pull, 30_000)
+    return () => {
+      alive = false
+      window.clearInterval(id)
+    }
+  }, [bump])
+  return events
+}
+
+/** Add an event at a local date and time ("2026-11-15T10:00"). Returns an error message, or null. */
+export async function addEvent(at: string, text: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${BRIDGE_HTTP_URL}/schedule`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ at: new Date(at).toISOString(), text }),
+    })
+    const body = await res.json()
+    bumpSchedule()
+    return res.ok ? null : String(body.error ?? 'Could not save it.')
+  } catch {
+    return 'JARVIS is not running.'
+  }
+}
+
+/** Remove an event. */
+export async function removeEvent(id: string): Promise<void> {
+  try {
+    await fetch(`${BRIDGE_HTTP_URL}/schedule/delete`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id }),
+    })
+  } finally {
+    bumpSchedule()
+  }
+}
+
 /** The current time, ticking. */
 export function useNow(ms = 1000): Date {
   const [now, set] = useState(() => new Date())

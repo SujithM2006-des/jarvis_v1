@@ -457,13 +457,41 @@ foreach ($x in $p) { [void]$x.CloseMainWindow() }
     ),
     tool(
       'list_open_apps',
-      'List the apps that currently have a window open, with their window titles.',
+      'List the apps that currently have a window open: name, window titles, and the memory ' +
+        'each uses (all of its processes together — Chrome runs dozens), plus total RAM in use. ' +
+        'When showing them, give every app its memory, heaviest first.',
       {},
       async () => {
         try {
           const out = await ps(
-            'Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle } | ' +
-              'ForEach-Object { "$($_.ProcessName): $($_.MainWindowTitle)" } | Out-String -Width 300',
+            String.raw`
+$all = Get-Process
+$wins = $all | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle }
+$rows = foreach ($n in ($wins | Select-Object -ExpandProperty ProcessName -Unique)) {
+  # Windows' own input helper, not an app the user opened.
+  if ($n -in 'TextInputHost', 'ShellExperienceHost', 'SearchHost') { continue }
+  $procs = $all | Where-Object ProcessName -eq $n
+  $w = $wins | Where-Object ProcessName -eq $n
+  $label = ($w | Select-Object -First 1).Description
+  # Store apps (Settings, Microsoft Store …) all run inside this host: name
+  # them by their windows instead.
+  if ($n -eq 'ApplicationFrameHost') { $label = ($w | Select-Object -ExpandProperty MainWindowTitle) -join ', ' }
+  if (-not $label) { $label = $n }
+  [pscustomobject]@{
+    app = $label
+    mb = [math]::Round((($procs | Measure-Object WorkingSet64 -Sum).Sum) / 1MB)
+    processes = @($procs).Count
+    windows = (($w | Select-Object -ExpandProperty MainWindowTitle) -join ' · ')
+  }
+}
+$os = Get-CimInstance Win32_OperatingSystem
+$used = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB, 1)
+$total = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
+$rows | Sort-Object mb -Descending | ForEach-Object {
+  $m = if ($_.mb -ge 1024) { '{0:N1} GB' -f ($_.mb / 1024) } else { "$($_.mb) MB" }
+  "$($_.app) — $m ($($_.processes) process$(if ($_.processes -ne 1) { 'es' })): $($_.windows)"
+}
+"RAM in use: $used GB of $total GB"`,
           )
           return ok(out || 'No windows are open.')
         } catch (err) {

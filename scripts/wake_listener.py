@@ -81,6 +81,23 @@ def toast(title, body):
     )
 
 
+PAST = HOME / "past-events.json"
+
+
+def archive_event(r):
+    """Keep a fired reminder for the calendar (as bridge/assistant.mjs does)."""
+    try:
+        past = json.loads(PAST.read_text(encoding="utf-8"))
+        if not isinstance(past, list):
+            past = []
+    except (OSError, ValueError):
+        past = []
+    past.append({"id": r.get("id"), "at": r.get("at"), "text": r.get("text", ""), "kind": r.get("kind")})
+    tmp = PAST.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(past[-500:], indent=2), encoding="utf-8")
+    os.replace(tmp, PAST)
+
+
 def fire_due_reminders():
     """While JARVIS is off: show due reminders and timers, and move repeating
     ones to their next time — the same bookkeeping the bridge does. Scheduled
@@ -112,6 +129,8 @@ def fire_due_reminders():
         title = "Jarvis timer" if r.get("kind") == "timer" else "Jarvis reminder"
         toast(title, f"{r.get('text', '')}{note}")
         fired += 1
+        if r.get("kind") != "timer":
+            archive_event(r)
         step = {"daily": 1, "weekly": 7}.get(r.get("repeat") or "", 0)
         if step:
             while at <= now:

@@ -147,7 +147,8 @@ function run(name, command, args, colour, env, { restart = false } = {}) {
       // Only a run of crashes stops everything, so a broken bridge cannot spin.
       const now = Date.now()
       while (crashes.length && now - crashes[0] > RESTART_WINDOW_MS) crashes.shift()
-      if (restart && code !== 0 && crashes.length < RESTARTS) {
+      // Exit code 3 is "port taken" (another JARVIS already running): final.
+      if (restart && code !== 0 && code !== 3 && crashes.length < RESTARTS) {
         crashes.push(now)
         console.log(`\x1b[${colour}m${name}\x1b[0m crashed (${code}); restarting (${crashes.length}/${RESTARTS}).`)
         setTimeout(() => {

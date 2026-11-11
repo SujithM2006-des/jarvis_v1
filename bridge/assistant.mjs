@@ -175,6 +175,8 @@ export function startScheduler({ announce, whatsapp }) {
 
         const next = nextRepeat(r.at, r.repeat)
         if (next) keep.push({ ...r, at: next.toISOString() })
+        // The calendar keeps it on its day.
+        archiveEvent(r)
       }
       saveReminders(keep)
     } catch (err) {
@@ -200,6 +202,70 @@ const WMO = {
   66: 'freezing rain', 67: 'freezing rain', 71: 'light snow', 73: 'snow', 75: 'heavy snow',
   80: 'rain showers', 81: 'rain showers', 82: 'violent rain showers', 95: 'thunderstorms',
   96: 'thunderstorms with hail', 99: 'thunderstorms with hail',
+}
+
+// ---------------------------------------------------------------------------
+// The calendar: pending reminders plus the ones already past
+// ---------------------------------------------------------------------------
+
+const PAST = join(DIR, 'past-events.json')
+
+function loadPast() {
+  try {
+    const v = JSON.parse(readFileSync(PAST, 'utf8'))
+    return Array.isArray(v) ? v : []
+  } catch {
+    return []
+  }
+}
+
+/** Keep a fired one-off reminder, so the calendar still shows it on its day. */
+export function archiveEvent(r) {
+  if (!r || r.kind === 'timer') return
+  const past = loadPast()
+  past.push({ id: r.id, at: r.at, text: r.kind === 'whatsapp' ? `WhatsApp ${r.contact}: ${r.message ?? ''}` : r.text, kind: r.kind })
+  writeSafe(PAST, JSON.stringify(past.slice(-500), null, 2))
+}
+
+/** Every event the calendar can show: pending (with repeats) and past. */
+export function scheduleList() {
+  const pending = loadReminders()
+    .filter((r) => r.kind !== 'timer')
+    .map((r) => ({
+      id: r.id,
+      at: r.at,
+      text: r.kind === 'whatsapp' ? `WhatsApp ${r.contact}: ${r.message ?? ''}` : r.text,
+      kind: r.kind,
+      repeat: r.repeat ?? null,
+      done: false,
+    }))
+  const past = loadPast().map((r) => ({ ...r, repeat: null, done: true }))
+  return [...past, ...pending].sort((a, b) => new Date(a.at) - new Date(b.at))
+}
+
+/** Add an event from the calendar (a reminder at that time). */
+export function addSchedule({ at, text }) {
+  const when = new Date(String(at ?? ''))
+  const what = String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, 200)
+  if (Number.isNaN(when.getTime())) throw new Error('That date and time could not be read.')
+  if (!what) throw new Error('Say what the event is.')
+  const r = { id: Math.random().toString(36).slice(2, 7), at: when.toISOString(), text: what, kind: 'reminder' }
+  // Already past (an entry for earlier today, say): kept as a past event.
+  if (when.getTime() < Date.now()) archiveEvent(r)
+  else saveReminders([...loadReminders(), r])
+  return r
+}
+
+/** Remove an event, pending or past. */
+export function removeSchedule(id) {
+  const key = String(id ?? '')
+  const list = loadReminders()
+  const keep = list.filter((r) => r.id !== key)
+  if (keep.length !== list.length) saveReminders(keep)
+  const past = loadPast()
+  const keepPast = past.filter((r) => r.id !== key)
+  if (keepPast.length !== past.length) writeSafe(PAST, JSON.stringify(keepPast, null, 2))
+  return keep.length !== list.length || keepPast.length !== past.length
 }
 
 /** Upcoming scheduled items, soonest first — for the HUD. */
@@ -248,7 +314,7 @@ let weatherCache = { at: 0, data: null }
 /** Structured weather for the HUD, cached for fifteen minutes. */
 export async function weatherData() {
   if (weatherCache.data && Date.now() - weatherCache.at < 15 * 60_000) return weatherCache.data
-  const raw = await weatherRaw(rememberedCity())
+  const raw = await weatherRaw(null)
   const data = {
     city: raw.place.name,
     temp: Math.round(raw.w.current.temperature_2m),
@@ -279,6 +345,59 @@ async function weather(city) {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Where the user is
+// ---------------------------------------------------------------------------
+
+let locationCache = { at: 0, data: null }
+
+/**
+ * The PC's own location from Windows (Wi-Fi positioning, GPS if fitted) —
+ * typically within a few hundred metres, where the internet provider's guess
+ * can be a different city. Named by reverse geocoding. Refreshed at most every
+ * 20 minutes. Null when Windows location is off or refused.
+ */
+export async function preciseLocation() {
+  if (locationCache.data && Date.now() - locationCache.at < 20 * 60_000) return locationCache.data
+  const json = await ps(
+    'Add-Type -AssemblyName System.Device; ' +
+      '$w = New-Object System.Device.Location.GeoCoordinateWatcher([System.Device.Location.GeoPositionAccuracy]::High); ' +
+      "$w.Start(); $t = 0; while ($w.Status -ne 'Ready' -and $w.Permission -ne 'Denied' -and $t -lt 100) { Start-Sleep -Milliseconds 100; $t++ }; " +
+      '$c = $w.Position.Location; $w.Stop(); ' +
+      "if ($c.IsUnknown) { 'null' } else { [pscustomobject]@{ lat = $c.Latitude; lon = $c.Longitude; acc = $c.HorizontalAccuracy } | ConvertTo-Json -Compress }",
+    {},
+    20_000,
+  )
+  const pos = JSON.parse(json || 'null')
+  if (!pos || !Number.isFinite(pos.lat)) return null
+  let name = ''
+  let city = ''
+  let region = ''
+  let country = ''
+  try {
+    const g = await (await fetch(
+      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${pos.lat}&longitude=${pos.lon}&localityLanguage=en`,
+    )).json()
+    city = g.city || g.locality || ''
+    name = g.locality && g.locality !== city ? `${g.locality}, ${city}` : city
+    region = g.principalSubdivision || ''
+    country = g.countryName || ''
+  } catch {
+    /* coordinates are enough for the weather */
+  }
+  const data = {
+    lat: +pos.lat.toFixed(4),
+    lon: +pos.lon.toFixed(4),
+    accuracyM: Math.round(pos.acc || 0),
+    name: name || `${pos.lat.toFixed(3)}, ${pos.lon.toFixed(3)}`,
+    city,
+    region,
+    country,
+  }
+  locationCache = { at: Date.now(), data }
+  return data
+}
+
 async function weatherRaw(city) {
   let place
   if (city) {
@@ -288,9 +407,20 @@ async function weatherRaw(city) {
     place = g.results?.[0]
     if (!place) throw new Error(`No place called ${city} was found.`)
   } else {
-    const ip = await (await fetch('https://ipwho.is/')).json()
-    if (!ip?.success) throw new Error('Could not work out where you are; give a city.')
-    place = { name: ip.city, latitude: ip.latitude, longitude: ip.longitude, admin1: ip.region }
+    // Where they actually are: Windows location (Wi-Fi/GPS), then a city
+    // they told him to remember, then — last — the internet provider's
+    // rough guess, which is often a city or more away.
+    const here = await preciseLocation().catch(() => null)
+    const remembered = here ? null : rememberedCity()
+    if (here) {
+      place = { name: here.name, latitude: here.lat, longitude: here.lon, admin1: here.region }
+    } else if (remembered) {
+      return weatherRaw(remembered)
+    } else {
+      const ip = await (await fetch('https://ipwho.is/')).json()
+      if (!ip?.success) throw new Error('Could not work out where you are; give a city.')
+      place = { name: ip.city, latitude: ip.latitude, longitude: ip.longitude, admin1: ip.region }
+    }
   }
   const w = await (await fetch(
     `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}` +
@@ -356,6 +486,30 @@ export function assistantServer({ allowWrites }) {
           if (!removed.length) return ok(`No remembered fact mentions "${matching}".${historyNote}`)
           writeSafe(MEMORY, kept.join('\n'))
           return ok(`Forgot: ${removed.join(' | ')}.${historyNote}`)
+        },
+      ),
+      tool(
+        'my_location',
+        'Where the user is right now, from their PC\'s location (Wi-Fi positioning — usually within ' +
+          'a few hundred metres): area, city, region, country and coordinates. Use for "where am I", ' +
+          'and before anything "near me" (restaurants, hospitals, petrol, directions, local news).',
+        {},
+        async () => {
+          try {
+            const here = await preciseLocation()
+            if (!here) {
+              return fail(
+                'Windows location is off or not allowed for desktop apps (Settings → Privacy & security → ' +
+                  'Location). Ask which city they are in instead.',
+              )
+            }
+            return ok(
+              `${here.name}${here.region ? `, ${here.region}` : ''}${here.country ? `, ${here.country}` : ''} ` +
+                `(${here.lat}, ${here.lon}; accurate to about ${here.accuracyM} m).`,
+            )
+          } catch (err) {
+            return fail(`Could not get the location: ${err.message}`)
+          }
         },
       ),
       tool(
@@ -463,12 +617,12 @@ export function assistantServer({ allowWrites }) {
       ),
       tool(
         'weather',
-        'Current weather and the forecast for today and tomorrow. Give a city, or leave it out ' +
-          'to use the city remembered for the user (pass it) or their approximate location.',
+        'Current weather and the forecast for today and tomorrow. Leave city out for where the ' +
+          'user actually is right now (their PC\'s location); give a city only when they name one.',
         { city: z.string().optional() },
         async ({ city }) => {
           try {
-            return ok(await weather(city || rememberedCity()))
+            return ok(await weather(city || null))
           } catch (err) {
             return fail(`Weather is unavailable: ${err.message}`)
           }

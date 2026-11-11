@@ -53,11 +53,19 @@ const popupState = { phase: 'offline', heard: '', said: '', tool: '', muted: fal
  * and the wake listener read it from there.
  */
 const BRIDGE_TOKEN = randomBytes(24).toString('hex')
-try {
-  mkdirSync(join(homedir(), '.jarvis'), { recursive: true })
-  writeFileSync(join(homedir(), '.jarvis', 'bridge-token'), BRIDGE_TOKEN)
-} catch (err) {
-  console.warn(`[jarvis] could not write the bridge key: ${err.message}`)
+/**
+ * Saved only once this bridge actually holds the port (see server.listen).
+ * Written at load, a second bridge started while one was running — which then
+ * failed on the busy port — overwrote the running one's key, and the popup
+ * was locked out ("JARVIS is not running").
+ */
+function publishToken() {
+  try {
+    mkdirSync(join(homedir(), '.jarvis'), { recursive: true })
+    writeFileSync(join(homedir(), '.jarvis', 'bridge-token'), BRIDGE_TOKEN)
+  } catch (err) {
+    console.warn(`[jarvis] could not write the bridge key: ${err.message}`)
+  }
 }
 
 const MUTE_FILE = join(homedir(), '.jarvis', 'muted')
@@ -161,7 +169,7 @@ const DOCK_APPS = {
   calculator: () => openApp('calculator'),
   notepad: () => openApp('notepad'),
 }
-import { assistantServer, memoryPrompt, startScheduler } from './assistant.mjs'
+import { addSchedule, assistantServer, memoryPrompt, removeSchedule, scheduleList, startScheduler } from './assistant.mjs'
 import { journalPrompt, record as recordExchange } from './journal.mjs'
 import { composeWithAttachments, prepareAttachments, tidyAttached } from './attachments.mjs'
 import { customizeServer } from './customize.mjs'
@@ -718,6 +726,13 @@ playwright, for anything to do with WhatsApp:
 const PROMPT_ASSISTANT = `Personal assistant — you are theirs, and you remember:
 - Each message starts with [Local time: …]. That is your clock; never read it out
   unless asked the time, and never mention the tag.
+- Asked the time: say it plainly, as a clock shows it — "It's 8:51 PM, sir."
+  Never "nine minutes to nine", "quarter past", "half eight" or other ways
+  round. Add the date only if they asked for it ("It's Wednesday, 11 November").
+- Where they are: their PC knows (\`my_location\`, usually within a few hundred
+  metres). Weather, temperature and anything "near me" use where they actually
+  are now — call \`weather\` with no city unless they name one. Never assume
+  the city from memory or a guess when \`my_location\` can tell you.
 - Memory (\`jarvis_assistant\`): "remember that…" is \`remember\`. Also remember on
   your own anything they will expect you to know next time — who someone is, how
   a contact is saved, their timetable, city, preferences, projects they are
@@ -1083,7 +1098,7 @@ const handleRequest = async (req, res) => {
   // Commands from outside a browser need the local key (see BRIDGE_TOKEN).
   // Pages are already held to their Origin above; GETs for images and the
   // health check stay open, the popup's live state does not.
-  const command = req.method === 'POST' || req.url === '/popup/state'
+  const command = req.method === 'POST' || req.url === '/popup/state' || req.url === '/schedule'
   if (command && !origin && !ALLOW_NO_ORIGIN && req.headers['x-jarvis-token'] !== BRIDGE_TOKEN) {
     console.warn(`[jarvis] refused ${req.method} ${req.url}: no valid local key`)
     res.writeHead(401, cors)
@@ -1204,6 +1219,22 @@ const handleRequest = async (req, res) => {
   if (req.method === 'GET' && req.url === '/status') {
     res.writeHead(200, { ...cors, 'content-type': 'application/json', 'cache-control': 'no-store' })
     return res.end(JSON.stringify(telemetry()))
+  }
+
+  // The calendar: list, add and remove events (they are reminders, so they
+  // also pop up when due, and "remind me on the 15th…" shows up here too).
+  if (req.url === '/schedule' || req.url === '/schedule/delete') {
+    const json = (code, body) => {
+      res.writeHead(code, { ...cors, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+      return res.end(JSON.stringify(body))
+    }
+    try {
+      if (req.method === 'GET' && req.url === '/schedule') return json(200, { events: scheduleList() })
+      if (req.method === 'POST' && req.url === '/schedule') return json(200, { event: addSchedule(await readJson(req)) })
+      if (req.method === 'POST') return json(200, { removed: removeSchedule((await readJson(req)).id) })
+    } catch (err) {
+      return json(400, { error: err.message })
+    }
   }
 
   // The HUD dock. Only from our own page (an allowed Origin is required, not
@@ -1564,9 +1595,13 @@ server.on('error', (err) => {
       ? `[jarvis] port ${PORT} on ${HOST} is already in use — stop whatever holds it or set JARVIS_BRIDGE_PORT`
       : `[jarvis] bridge could not listen on ${HOST}:${PORT}: ${err.message}`,
   )
-  process.exit(1)
+  // 3 = the port is taken (usually: JARVIS is already running), which a
+  // restart cannot fix — scripts/start.mjs does not retry on it.
+  process.exit(err.code === 'EADDRINUSE' ? 3 : 1)
 })
 await new Promise((resolve) => server.listen(PORT, HOST, resolve))
+// This bridge owns the port: now, and only now, its key is the one to use.
+publishToken()
 
 const LOOPBACK = HOST === '127.0.0.1' || HOST === '::1' || HOST === 'localhost'
 const bound = server.address()

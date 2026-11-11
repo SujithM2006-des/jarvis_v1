@@ -27,74 +27,74 @@ function Auth { try { @{ 'x-jarvis-token' = ([IO.File]::ReadAllText($tokenFile))
   <Grid>
   <!-- The tucked-away state: a small tab at the top of the screen. Click to open. -->
   <Border x:Name="Notch" Visibility="Collapsed" CornerRadius="0,0,14,14" BorderThickness="1,0,1,1"
-          BorderBrush="#5519D8D2" Background="#F0061822" Cursor="Hand" ToolTip="Open JARVIS">
+          BorderBrush="#553FB6FF" Background="#F00A1F45" Cursor="Hand" ToolTip="Open JARVIS">
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-      <Ellipse x:Name="NotchDot" Width="7" Height="7" Fill="#19D8D2" Margin="0,0,7,0"/>
-      <TextBlock Text="J.A.R.V.I.S." Foreground="#19D8D2" FontFamily="Segoe UI Semibold" FontSize="11"/>
-      <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" Foreground="#7FB6BF" FontSize="9" Margin="7,2,0,0"/>
+      <Ellipse x:Name="NotchDot" Width="7" Height="7" Fill="#3FB6FF" Margin="0,0,7,0"/>
+      <TextBlock Text="J.A.R.V.I.S." Foreground="#3FB6FF" FontFamily="Segoe UI Semibold" FontSize="11"/>
+      <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" Foreground="#9CC4EE" FontSize="9" Margin="7,2,0,0"/>
     </StackPanel>
   </Border>
-  <Border x:Name="Panel" CornerRadius="16" BorderThickness="1" BorderBrush="#5519D8D2" Padding="16,12,16,14">
+  <Border x:Name="Panel" CornerRadius="16" BorderThickness="1" BorderBrush="#553FB6FF" Padding="16,12,16,14">
     <Border.Background>
       <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-        <GradientStop Color="#F0061822" Offset="0"/>
-        <GradientStop Color="#F0020A10" Offset="1"/>
+        <GradientStop Color="#F00A1F45" Offset="0"/>
+        <GradientStop Color="#F003091C" Offset="1"/>
       </LinearGradientBrush>
     </Border.Background>
-    <Border.Effect><DropShadowEffect BlurRadius="24" ShadowDepth="0" Color="#19D8D2" Opacity="0.35"/></Border.Effect>
+    <Border.Effect><DropShadowEffect BlurRadius="24" ShadowDepth="0" Color="#3FB6FF" Opacity="0.35"/></Border.Effect>
     <Grid>
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
       </Grid.RowDefinitions>
       <Grid Grid.Row="0" x:Name="Header" Background="Transparent" Margin="0,0,0,8">
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-          <Ellipse x:Name="Dot" Width="9" Height="9" Fill="#19D8D2" Margin="0,0,9,0">
-            <Ellipse.Effect><DropShadowEffect BlurRadius="10" ShadowDepth="0" Color="#19D8D2" Opacity="0.9"/></Ellipse.Effect>
+          <Ellipse x:Name="Dot" Width="9" Height="9" Fill="#3FB6FF" Margin="0,0,9,0">
+            <Ellipse.Effect><DropShadowEffect BlurRadius="10" ShadowDepth="0" Color="#3FB6FF" Opacity="0.9"/></Ellipse.Effect>
           </Ellipse>
-          <TextBlock Text="J.A.R.V.I.S." Foreground="#19D8D2" FontFamily="Segoe UI Semibold" FontSize="14"/>
-          <TextBlock x:Name="Status" Text="  ·  connecting" Foreground="#7FB6BF" FontFamily="Segoe UI" FontSize="11" VerticalAlignment="Center" Margin="4,1,0,0"/>
+          <TextBlock Text="J.A.R.V.I.S." Foreground="#3FB6FF" FontFamily="Segoe UI Semibold" FontSize="14"/>
+          <TextBlock x:Name="Status" Text="  ·  connecting" Foreground="#9CC4EE" FontFamily="Segoe UI" FontSize="11" VerticalAlignment="Center" Margin="4,1,0,0"/>
         </StackPanel>
         <Button x:Name="Close" Content="✕" HorizontalAlignment="Right" Width="26" Height="26" FontSize="13"
-                Foreground="#9FD8DC" Background="Transparent" BorderThickness="0" Cursor="Hand" ToolTip="Close the popup (JARVIS keeps running)"/>
+                Foreground="#A8D4FF" Background="Transparent" BorderThickness="0" Cursor="Hand" ToolTip="Close the popup (JARVIS keeps running)"/>
       </Grid>
       <ScrollViewer Grid.Row="1" x:Name="Scroll" VerticalScrollBarVisibility="Auto">
         <StackPanel>
-          <TextBlock x:Name="Heard" TextWrapping="Wrap" Foreground="#7FB6BF" FontFamily="Segoe UI" FontSize="12" Margin="0,0,0,6"/>
-          <TextBlock x:Name="Said" TextWrapping="Wrap" Foreground="#E6FBFF" FontFamily="Segoe UI" FontSize="14"
+          <TextBlock x:Name="Heard" TextWrapping="Wrap" Foreground="#9CC4EE" FontFamily="Segoe UI" FontSize="12" Margin="0,0,0,6"/>
+          <TextBlock x:Name="Said" TextWrapping="Wrap" Foreground="#E9F3FF" FontFamily="Segoe UI" FontSize="14"
                      Text="Say &quot;Hey Jarvis&quot;, type below, attach or drop a file, or circle something on screen."/>
         </StackPanel>
       </ScrollViewer>
       <!-- Files waiting to be sent: names, and a cross to drop them. -->
       <Grid Grid.Row="2" x:Name="AttachRow" Visibility="Collapsed" Margin="0,6,0,0">
-        <TextBlock x:Name="AttachList" Foreground="#9FD8DC" FontFamily="Segoe UI" FontSize="11.5"
+        <TextBlock x:Name="AttachList" Foreground="#A8D4FF" FontFamily="Segoe UI" FontSize="11.5"
                    TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,26,0"/>
         <Button x:Name="AttachClear" Content="✕" HorizontalAlignment="Right" Width="20" Height="20" FontSize="10"
-                Foreground="#9FD8DC" Background="Transparent" BorderThickness="0" Cursor="Hand" ToolTip="Remove the attachments"/>
+                Foreground="#A8D4FF" Background="Transparent" BorderThickness="0" Cursor="Hand" ToolTip="Remove the attachments"/>
       </Grid>
       <Grid Grid.Row="3" Margin="0,8,0,0">
         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <Button x:Name="Circle" Grid.Column="0" Content="◯" Width="34" Height="32" FontSize="15" Margin="0,0,8,0"
-                Foreground="#19D8D2" Background="#2219D8D2" BorderBrush="#5519D8D2" Cursor="Hand" ToolTip="Circle to search"/>
+                Foreground="#3FB6FF" Background="#223FB6FF" BorderBrush="#553FB6FF" Cursor="Hand" ToolTip="Circle to search"/>
         <Button x:Name="Mic" Grid.Column="1" Content="&#xE720;" FontFamily="Segoe MDL2 Assets" Width="34" Height="32" FontSize="15" Margin="0,0,8,0"
-                Foreground="#19D8D2" Background="#2219D8D2" BorderBrush="#5519D8D2" Cursor="Hand"
+                Foreground="#3FB6FF" Background="#223FB6FF" BorderBrush="#553FB6FF" Cursor="Hand"
                 ToolTip="Talk to JARVIS (tap again to put him on standby)"/>
         <!-- Mute: a microphone with a slash; red while muted. -->
         <Button x:Name="Mute" Grid.Column="2" Width="34" Height="32" Margin="0,0,8,0"
-                Background="#2219D8D2" BorderBrush="#5519D8D2" Cursor="Hand" ToolTip="Mute the microphone">
+                Background="#223FB6FF" BorderBrush="#553FB6FF" Cursor="Hand" ToolTip="Mute the microphone">
           <Grid>
-            <TextBlock x:Name="MuteGlyph" Text="&#xE720;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="#19D8D2"
+            <TextBlock x:Name="MuteGlyph" Text="&#xE720;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="#3FB6FF"
                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            <Line x:Name="MuteSlash" X1="0" Y1="0" X2="16" Y2="16" Stroke="#19D8D2" StrokeThickness="2"
+            <Line x:Name="MuteSlash" X1="0" Y1="0" X2="16" Y2="16" Stroke="#3FB6FF" StrokeThickness="2"
                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Grid>
         </Button>
         <Button x:Name="Attach" Grid.Column="3" Content="&#xE723;" FontFamily="Segoe MDL2 Assets" Width="34" Height="32" FontSize="15" Margin="0,0,8,0"
-                Foreground="#19D8D2" Background="#2219D8D2" BorderBrush="#5519D8D2" Cursor="Hand"
+                Foreground="#3FB6FF" Background="#223FB6FF" BorderBrush="#553FB6FF" Cursor="Hand"
                 ToolTip="Attach documents or images (or drop them here, or paste with Ctrl+V)"/>
         <TextBox x:Name="Input" Grid.Column="4" Height="32" Padding="8,6" FontFamily="Segoe UI" FontSize="13"
-                 Foreground="#E6FBFF" CaretBrush="#19D8D2" Background="#14FFFFFF" BorderBrush="#3319D8D2"/>
+                 Foreground="#E9F3FF" CaretBrush="#3FB6FF" Background="#14FFFFFF" BorderBrush="#333FB6FF"/>
         <Button x:Name="Send" Grid.Column="5" Content="➤" Width="34" Height="32" FontSize="14" Margin="8,0,0,0"
-                Foreground="#02121A" Background="#19D8D2" BorderThickness="0" Cursor="Hand" ToolTip="Send"/>
+                Foreground="#02132B" Background="#3FB6FF" BorderThickness="0" Cursor="Hand" ToolTip="Send"/>
       </Grid>
     </Grid>
   </Border>
@@ -106,10 +106,10 @@ $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $x
 $el = @{}
 foreach ($n in 'Header', 'Dot', 'Status', 'Close', 'Scroll', 'Heard', 'Said', 'Circle', 'Mic', 'Mute', 'MuteGlyph', 'MuteSlash', 'Attach', 'AttachRow', 'AttachList', 'AttachClear', 'Input', 'Send', 'Panel', 'Notch', 'NotchDot') { $el[$n] = $win.FindName($n) }
 $brush = { param($hex) (New-Object System.Windows.Media.BrushConverter).ConvertFromString($hex) }
-$micIdle = & $brush '#2219D8D2'
-$micLive = & $brush '#19D8D2'
-$micIdleFg = & $brush '#19D8D2'
-$micLiveFg = & $brush '#02121A'
+$micIdle = & $brush '#223FB6FF'
+$micLive = & $brush '#3FB6FF'
+$micIdleFg = & $brush '#3FB6FF'
+$micLiveFg = & $brush '#02132B'
 
 # Where it was last left, at the size it was last given; otherwise bottom-right,
 # just above the taskbar. Kept on screen in case the display has changed.
@@ -385,7 +385,7 @@ $el.Circle.Add_Click({ Post '/circle' $null | Out-Null })
 # Mute: the microphone off for JARVIS (this window and the background "Hey
 # Jarvis" listener) until tapped again. The mic button also unmutes.
 $muteOn = & $brush '#E0465A'
-$muteFg = & $brush '#02121A'
+$muteFg = & $brush '#02132B'
 $el.Mute.Add_Click({
   if (-not (Post '/popup/mute' $null)) { $el.Status.Text = '  ·  JARVIS is not running' }
 })

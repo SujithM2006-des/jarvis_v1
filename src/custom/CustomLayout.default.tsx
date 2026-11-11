@@ -11,6 +11,10 @@ import {
   useMuted,
   useNow,
   useHide,
+  useSchedule,
+  addEvent,
+  removeEvent,
+  type CalEvent,
   useStatus,
   type JarvisPhase,
   type StockPart,
@@ -100,6 +104,14 @@ const I = {
   ),
   send: <path d="M4 12 20 4l-4.5 16-3.5-6.5z" />,
   plus: <path d="M12 5v14M5 12h14" />,
+  close: <path d="M6 6l12 12M18 6L6 18" />,
+  left: <path d="M15 6l-6 6 6 6" />,
+  right: <path d="M9 6l6 6-6 6" />,
+  calendar: (
+    <>
+      <rect x="3.5" y="5" width="17" height="15.5" rx="2" /><path d="M3.5 10h17M8 3v4M16 3v4" />
+    </>
+  ),
   wifi: (
     <>
       <path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.5 16a5 5 0 0 1 7 0" /><circle cx="12" cy="19" r="1" />
@@ -195,88 +207,182 @@ function Meter({ icon, label, text, value }: { icon: ReactNode; label: string; t
   )
 }
 
-const GOALS_KEY = 'jarvis.goals'
-type Goal = { text: string; done: boolean }
-const DEFAULT_GOALS: Goal[] = [
-  { text: 'Improve DSA skills', done: false },
-  { text: 'Work on SmartFit', done: false },
-  { text: 'Stay healthy', done: false },
-]
+// ---------------------------------------------------------------- calendar
 
-function Goals({ i }: { i: number }) {
-  const [goals, setGoals] = useState<Goal[]>(() => {
-    try {
-      const g = JSON.parse(localStorage.getItem(GOALS_KEY) ?? 'null')
-      return Array.isArray(g) ? g : DEFAULT_GOALS
-    } catch {
-      return DEFAULT_GOALS
-    }
-  })
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
+
+/** Does this event fall on that day? Repeating ones recur from their start. */
+function onDay(e: CalEvent, day: Date) {
+  const at = new Date(e.at)
+  if (ymd(at) === ymd(day)) return true
+  if (e.done || !e.repeat) return false
+  const start = new Date(at.getFullYear(), at.getMonth(), at.getDate())
+  if (day < start) return false
+  if (e.repeat === 'daily') return true
+  if (e.repeat === 'weekly') return day.getDay() === at.getDay()
+  return false
+}
+
+const timeOf = (e: CalEvent) => new Date(e.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+
+/**
+ * The month, with a dot on days that have events. Click a day for what is on
+ * it; ＋ to add one (a reminder, so it also pops up when due). Events also
+ * arrive from voice: "Jarvis, remind me on the 15th to …".
+ */
+function Calendar({ i }: { i: number }) {
+  const events = useSchedule()
+  const today = new Date()
+  const [month, setMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1))
+  const [picked, setPicked] = useState<Date | null>(null)
   const [adding, setAdding] = useState(false)
-  const [draft, setDraft] = useState('')
+  const [date, setDate] = useState(ymd(today))
+  const [time, setTime] = useState('09:00')
+  const [text, setText] = useState('')
+  const [error, setError] = useState('')
+  // A picked day's events are below the month: scroll them into view.
+  const dropRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    try {
-      localStorage.setItem(GOALS_KEY, JSON.stringify(goals))
-    } catch {
-      /* this session only */
-    }
-  }, [goals])
-  const done = goals.filter((g) => g.done).length
-  const add = () => {
-    const t = draft.trim()
-    if (t) setGoals((g) => [...g, { text: t, done: false }])
-    setDraft('')
-    setAdding(false)
+    if (picked) dropRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [picked])
+
+  // Monday-first grid: blanks before the 1st, then each day of the month.
+  const first = (month.getDay() + 6) % 7
+  const days = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()
+  const cells: (Date | null)[] = [
+    ...Array.from({ length: first }, () => null),
+    ...Array.from({ length: days }, (_, d) => new Date(month.getFullYear(), month.getMonth(), d + 1)),
+  ]
+  const dayEvents = (d: Date) => events.filter((e) => onDay(e, d)).sort((a, b) => timeOf(a).localeCompare(timeOf(b)))
+
+  const openAdd = (d?: Date) => {
+    setDate(ymd(d ?? picked ?? today))
+    setText('')
+    setError('')
+    setAdding(true)
   }
+  const save = async () => {
+    if (!text.trim()) return setError('Say what the event is.')
+    const err = await addEvent(`${date}T${time || '09:00'}`, text.trim())
+    if (err) return setError(err)
+    setAdding(false)
+    setPicked(new Date(`${date}T00:00`))
+    setMonth(new Date(new Date(`${date}T00:00`).getFullYear(), new Date(`${date}T00:00`).getMonth(), 1))
+  }
+
   return (
     <Panel
-      title="Today's Goals"
-      icon={I.target}
+      title="Calendar"
+      icon={I.calendar}
       i={i}
-      className="vg-goals"
+      className="vg-cal"
       extra={
-        <button type="button" className="vg-icon-btn" title="Add a goal" onClick={() => setAdding((a) => !a)}>
-          <Icon size={14} w={2}>{I.plus}</Icon>
+        <button type="button" className="vg-icon-btn" title="Add an event" onClick={() => (adding ? setAdding(false) : openAdd())}>
+          <Icon size={14} w={2}>{adding ? I.close : I.plus}</Icon>
         </button>
       }
     >
-      <div className="vg-progress">
-        <span className="vg-track"><i style={{ width: `${goals.length ? (done / goals.length) * 100 : 0}%` }} /></span>
-        <span>{done}/{goals.length}</span>
+      <div className="vg-cal-head">
+        <button type="button" className="vg-cal-nav" title="Previous month" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>
+          <Icon size={14} w={2}>{I.left}</Icon>
+        </button>
+        <span>{month.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
+        <button type="button" className="vg-cal-nav" title="Next month" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>
+          <Icon size={14} w={2}>{I.right}</Icon>
+        </button>
       </div>
-      <ul className="vg-goal-list">
-        {goals.map((g, j) => (
-          <li key={j} className={g.done ? 'vg-done' : ''}>
-            <button
-              type="button"
-              className="vg-check"
-              aria-label={g.done ? 'Mark not done' : 'Mark done'}
-              title="Click to tick · right-click to remove"
-              onClick={() => setGoals((all) => all.map((x, k) => (k === j ? { ...x, done: !x.done } : x)))}
-              onContextMenu={(e) => {
-                e.preventDefault()
-                setGoals((all) => all.filter((_, k) => k !== j))
-              }}
-            >
-              <svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7" /></svg>
-            </button>
-            <span>{g.text}</span>
-          </li>
-        ))}
-      </ul>
-      {adding && (
-        <input
-          className="vg-goal-input"
-          autoFocus
-          value={draft}
-          placeholder="New goal, then Enter"
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') add()
-            if (e.key === 'Escape') setAdding(false)
-          }}
-          onBlur={add}
-        />
+
+      {adding ? (
+        <div className="vg-cal-form">
+          <label>
+            Date
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </label>
+          <label>
+            Time
+            <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+          </label>
+          <input
+            className="vg-cal-text"
+            autoFocus
+            placeholder="What's happening? e.g. DBMS lab exam"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void save()
+              if (e.key === 'Escape') setAdding(false)
+            }}
+          />
+          {error && <span className="vg-cal-error">{error}</span>}
+          <div className="vg-cal-actions">
+            <button type="button" className="vg-cal-cancel" onClick={() => setAdding(false)}>Cancel</button>
+            <button type="button" className="vg-cal-save" onClick={() => void save()}>Save event</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="vg-cal-grid">
+            {WEEKDAYS.map((w) => (
+              <span key={w} className="vg-cal-wd">{w}</span>
+            ))}
+            {cells.map((d, k) =>
+              d ? (
+                <button
+                  key={k}
+                  type="button"
+                  className={[
+                    'vg-cal-day',
+                    ymd(d) === ymd(today) ? 'vg-today' : '',
+                    picked && ymd(d) === ymd(picked) ? 'vg-picked' : '',
+                    dayEvents(d).length ? 'vg-has' : '',
+                  ].join(' ')}
+                  onClick={() => setPicked(picked && ymd(d) === ymd(picked) ? null : d)}
+                  onDoubleClick={() => openAdd(d)}
+                  title={dayEvents(d).length ? `${dayEvents(d).length} event(s)` : 'No events'}
+                >
+                  {d.getDate()}
+                </button>
+              ) : (
+                <span key={k} />
+              ),
+            )}
+          </div>
+
+          {picked && (
+            <div className="vg-cal-drop" ref={dropRef}>
+              <div className="vg-cal-drop-head">
+                <b>{picked.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</b>
+                <span className="vg-cal-drop-btns">
+                  <button type="button" className="vg-cal-add-day" onClick={() => openAdd(picked)}>
+                    <Icon size={12} w={2}>{I.plus}</Icon> Add
+                  </button>
+                  <button type="button" className="vg-cal-del" title="Close" onClick={() => setPicked(null)}>
+                    <Icon size={12} w={2}>{I.close}</Icon>
+                  </button>
+                </span>
+              </div>
+              {dayEvents(picked).length === 0 ? (
+                <div className="vg-cal-none">No event specified</div>
+              ) : (
+                <ul>
+                  {dayEvents(picked).map((e) => (
+                    <li key={`${e.id}-${e.at}`} className={e.done ? 'vg-cal-past' : ''}>
+                      <span className="vg-cal-time">{timeOf(e)}</span>
+                      <span className="vg-cal-what">
+                        {e.text}
+                        {e.repeat && <em> · {e.repeat}</em>}
+                      </span>
+                      <button type="button" className="vg-cal-del" title="Remove" onClick={() => void removeEvent(e.id)}>
+                        <Icon size={12} w={2}>{I.close}</Icon>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </>
       )}
     </Panel>
   )
@@ -576,7 +682,7 @@ export default function CustomLayout() {
           </div>
         </Panel>
 
-        <Goals i={2} />
+        <Calendar i={2} />
       </div>
 
       {/* Centre */}

@@ -39,7 +39,7 @@ body {
   color: var(--ink);
   pointer-events: none;
 }
-.vg-root.vg-ph-listening, .vg-root.vg-ph-waking { --core: #18c0ff; --hi: #c4f3ff; --deep: #0f7fe0; }
+/* Listening keeps the same blue as idle: no colour change (by request). */
 .vg-root.vg-ph-thinking { --core: #6f7dff; --hi: #d0d5ff; --deep: #3b3fd0; }
 .vg-root.vg-ph-tooling { --core: #ffa53a; --hi: #ffe0b5; --deep: #d56a00; }
 .vg-root.vg-ph-offline, .vg-root.vg-ph-boot { --core: #48597a; --hi: #9aabc4; --deep: #2c3a55; }
@@ -238,7 +238,7 @@ body {
   box-shadow: 0 0 8px currentColor;
   animation: vg-blink 1.6s ease-in-out infinite;
 }
-.vg-pill-listening, .vg-pill-waking { color: #86e6ff; border-color: rgba(63, 182, 255, 0.5); background: rgba(10, 70, 120, 0.35); }
+.vg-pill-listening, .vg-pill-waking { color: #9fcbff; border-color: rgba(42, 140, 255, 0.6); background: rgba(20, 60, 150, 0.38); }
 .vg-pill-speaking { color: #cde9ff; border-color: rgba(120, 190, 255, 0.5); background: rgba(30, 80, 170, 0.32); }
 .vg-pill-thinking { color: #c1c8ff; border-color: rgba(130, 140, 255, 0.5); background: rgba(45, 45, 130, 0.35); }
 .vg-pill-tooling { color: #ffd291; border-color: rgba(255, 175, 70, 0.5); background: rgba(110, 66, 10, 0.35); }
@@ -268,6 +268,10 @@ body {
 
 /* ---------------------------------------------------------------- rail */
 .vg-rail {
+  /* Above the panels beside it, so its hover labels show over them, not
+     under: each panel is its own layer (blur, animation) and comes later. */
+  position: relative;
+  z-index: 10;
   grid-row: 2 / 4;
   display: flex;
   flex-direction: column;
@@ -1051,4 +1055,203 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .vg-root *, .vg-root *::before, .vg-root *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+}
+
+/* ------------------------------------------------------------- calendar */
+.vg-cal {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.vg-cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.vg-cal-nav {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  color: var(--ink-2) !important;
+  transition: all 0.2s;
+}
+.vg-cal-nav:hover { background: rgba(63, 182, 255, 0.14) !important; color: #fff !important; }
+.vg-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+.vg-cal-wd {
+  text-align: center;
+  font: 500 10px 'JetBrains Mono', monospace;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  padding-bottom: 4px;
+}
+.vg-cal-day {
+  position: relative;
+  aspect-ratio: 1;
+  max-height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  font-size: 12px !important;
+  color: var(--ink-2) !important;
+  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+.vg-cal-day:hover { background: rgba(63, 182, 255, 0.12) !important; color: #fff !important; }
+.vg-cal-day.vg-has::after {
+  content: '';
+  position: absolute;
+  bottom: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+.vg-cal-day.vg-today {
+  color: #fff !important;
+  box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 10px rgba(63, 182, 255, 0.35);
+}
+.vg-cal-day.vg-picked {
+  color: #fff !important;
+  background: linear-gradient(135deg, rgba(63, 182, 255, 0.55), rgba(31, 120, 255, 0.35)) !important;
+}
+
+/* The dropdown under the grid for the picked day. */
+/* The whole card scrolls: the month, then the picked day's events below it,
+   so nothing is covered or cut off. */
+.vg-cal {
+  position: relative;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(63, 182, 255, 0.45) transparent;
+}
+.vg-cal::-webkit-scrollbar { width: 6px; }
+.vg-cal::-webkit-scrollbar-thumb { background: rgba(63, 182, 255, 0.45); border-radius: 6px; }
+.vg-cal::-webkit-scrollbar-track { background: transparent; }
+.vg-cal > .vg-ph { flex: none; }
+.vg-cal-grid, .vg-cal-head { flex: none; }
+.vg-cal-drop {
+  flex: none;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--edge-hi);
+  background: linear-gradient(165deg, rgba(14, 36, 80, 0.97), rgba(4, 12, 30, 0.98));
+  box-shadow: 0 0 22px rgba(31, 120, 255, 0.2);
+  animation: vg-rise 0.3s var(--ease) both;
+}
+.vg-cal-drop-btns { display: inline-flex; align-items: center; gap: 4px; }
+.vg-cal-drop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.vg-cal-add-day {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--edge) !important;
+  font-size: 11px !important;
+  color: var(--accent) !important;
+}
+.vg-cal-add-day:hover { background: rgba(63, 182, 255, 0.14) !important; }
+.vg-cal-none {
+  font-size: 12px;
+  color: var(--ink-3);
+  font-style: italic;
+}
+.vg-cal-drop ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.vg-cal-drop li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.vg-cal-time {
+  font: 500 11px 'JetBrains Mono', monospace;
+  color: var(--accent);
+}
+.vg-cal-what em { font-style: normal; color: var(--ink-3); font-size: 11px; }
+.vg-cal-past { opacity: 0.55; }
+.vg-cal-past .vg-cal-what { text-decoration: line-through; }
+.vg-cal-del {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--ink-3) !important;
+}
+.vg-cal-del:hover { color: #ff9a9a !important; background: rgba(255, 90, 90, 0.12) !important; }
+
+/* Adding an event. */
+.vg-cal-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  animation: vg-rise 0.3s var(--ease) both;
+}
+.vg-cal-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.vg-cal-form input {
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 8px;
+  border: 1px solid var(--edge-hi);
+  background: rgba(4, 14, 34, 0.9);
+  color: var(--ink);
+  font: 400 12.5px 'Inter', sans-serif;
+  outline: none;
+  color-scheme: dark;
+}
+.vg-cal-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(63, 182, 255, 0.15); }
+.vg-cal-text { grid-column: 1 / -1; }
+.vg-cal-error { grid-column: 1 / -1; font-size: 11.5px; color: #ff9a9a; }
+.vg-cal-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.vg-cal-cancel, .vg-cal-save {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 12px !important;
+}
+.vg-cal-cancel { color: var(--ink-2) !important; border: 1px solid var(--edge) !important; }
+.vg-cal-save { color: #fff !important; background: linear-gradient(135deg, #3fb6ff, #1546d6) !important; box-shadow: 0 0 14px rgba(31, 120, 255, 0.45); }
+/* Panels and article views Jarvis opens ("Open Apps", search results…):
+   always Jarvis blue — not the phase colour (green while speaking, etc.),
+   and not a per-panel accent. */
+.hud,
+.hud .panel-default,
+.hud .panel-amber,
+.hud .panel-violet,
+.hud .panel-green,
+.hud .panel-red {
+  --accent: #3fb6ff !important;
+  --interface: #3fb6ff !important;
 }
