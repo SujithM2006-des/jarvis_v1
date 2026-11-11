@@ -1703,8 +1703,27 @@ server.on('error', (err) => {
 await new Promise((resolve) => server.listen(PORT, HOST, resolve))
 // This bridge owns the port: now, and only now, its key is the one to use.
 publishToken()
-// Popup mode: the popup is the face, open from the start.
+// Popup mode: the popup is the face, open from the start — and kept open. A
+// popup started by an earlier bridge (before a restart) is not this one's
+// child, so its exit is never seen here; instead every popup stamps
+// ~/.jarvis/popup-alive every two seconds, and a stale stamp means none is
+// running. A spare one started while another is up just exits (code 3).
 if (popupMode()) setTimeout(showPopup, 1500)
+const POPUP_ALIVE = join(homedir(), '.jarvis', 'popup-alive')
+setInterval(() => {
+  if (!popupMode() || popupHiddenOnPurpose) return
+  if (popupProc && popupProc.exitCode === null) return
+  let at = 0
+  try {
+    at = Number(readFileSync(POPUP_ALIVE, 'utf8'))
+  } catch {
+    /* never stamped */
+  }
+  if (Date.now() - at > 8000) {
+    console.log('[jarvis] popup mode: no popup running - opening it')
+    showPopup()
+  }
+}, 10_000).unref()
 
 const LOOPBACK = HOST === '127.0.0.1' || HOST === '::1' || HOST === 'localhost'
 const bound = server.address()

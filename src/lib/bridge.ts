@@ -193,18 +193,38 @@ let everConnected = false
 /** Backoff for the automatic re-dial. It gives up after the last delay rather
  *  than retrying forever — a bridge that has been down for half a minute is
  *  usually one you stopped on purpose, and the next ask() re-dials anyway. */
-const RECONNECT_DELAYS = [500, 1000, 2000, 4000, 8000, 8000]
+/**
+ * Reconnecting never gives up. It used to stop after six tries (about 24 s),
+ * so a brain that took longer to come back — a slow restart, a busy PC — left
+ * the window on "Reconnecting…" for good. Now: quick tries first, then every
+ * 3 s for as long as it takes; and at once when the page is shown again or
+ * the network returns.
+ */
+const RECONNECT_DELAYS = [500, 1000, 2000, 3000]
 let attempt = 0
 let reconnectTimer = 0
 
 function scheduleReconnect() {
-  if (attempt >= RECONNECT_DELAYS.length) return
-  const delay = RECONNECT_DELAYS[attempt]
+  const delay = RECONNECT_DELAYS[Math.min(attempt, RECONNECT_DELAYS.length - 1)]
   attempt += 1
   clearTimeout(reconnectTimer)
   reconnectTimer = window.setTimeout(() => {
-    void connect().catch(() => {})
+    void connect().catch(() => {
+      // A failed dial does not fire the "lost" path again; keep going.
+      if (!socket) scheduleReconnect()
+    })
   }, delay)
+}
+
+if (typeof window !== 'undefined') {
+  const nudge = () => {
+    if (!socket && everConnected && document.visibilityState === 'visible') {
+      attempt = 0
+      scheduleReconnect()
+    }
+  }
+  window.addEventListener('online', nudge)
+  document.addEventListener('visibilitychange', nudge)
 }
 
 /**

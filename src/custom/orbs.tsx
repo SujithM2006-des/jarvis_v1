@@ -15,7 +15,9 @@ import './orbs.css'
  *   prism    turning hexagonal shields around a calm centre
  */
 
-export type OrbId = 'reactor' | 'atom' | 'nebula' | 'pulse' | 'prism'
+export type OrbId =
+  | 'reactor' | 'atom' | 'nebula' | 'pulse' | 'prism'
+  | 'vortex' | 'radar' | 'eclipse' | 'gyro' | 'globe'
 
 export const ORBS: { id: OrbId; label: string; textBelow: boolean }[] = [
   { id: 'reactor', label: 'Arc Reactor', textBelow: false },
@@ -23,6 +25,11 @@ export const ORBS: { id: OrbId; label: string; textBelow: boolean }[] = [
   { id: 'nebula', label: 'Nebula', textBelow: true },
   { id: 'pulse', label: 'Pulse', textBelow: false },
   { id: 'prism', label: 'Prism', textBelow: false },
+  { id: 'vortex', label: 'Vortex', textBelow: true },
+  { id: 'radar', label: 'Radar', textBelow: false },
+  { id: 'eclipse', label: 'Eclipse', textBelow: false },
+  { id: 'gyro', label: 'Gyroscope', textBelow: false },
+  { id: 'globe', label: 'Globe', textBelow: true },
 ]
 
 export const orbInfo = (id: string | undefined) => ORBS.find((o) => o.id === id) ?? ORBS[0]
@@ -65,6 +72,11 @@ export function Orb({ id, phase, level, legend = '', className = '' }: Props) {
       {o.id === 'nebula' && <Nebula />}
       {o.id === 'pulse' && <Pulse lv={lv} />}
       {o.id === 'prism' && <Prism />}
+      {o.id === 'vortex' && <Vortex />}
+      {o.id === 'radar' && <Radar />}
+      {o.id === 'eclipse' && <Eclipse />}
+      {o.id === 'gyro' && <Gyro />}
+      {o.id === 'globe' && <Globe />}
     </svg>
   )
 }
@@ -334,6 +346,220 @@ function Prism() {
       <polygon points={hex(124)} fill={`url(#${u}h)`} />
       <g className="orb-spin orb-s30 orb-rev">
         <polygon points={hex(112)} className="orb-hex-b" strokeDasharray="10 8" />
+      </g>
+    </>
+  )
+}
+
+// ------------------------------------------------------------------- vortex
+
+/** A logarithmic spiral arm from the core outwards, as a path. */
+function spiral(turn: number) {
+  const pts: string[] = []
+  for (let i = 0; i <= 60; i++) {
+    const t = i / 60
+    const r = 14 + 172 * t * t
+    const a = turn + t * Math.PI * 1.9
+    pts.push(`${(200 + Math.cos(a) * r).toFixed(1)},${(200 + Math.sin(a) * r).toFixed(1)}`)
+  }
+  return `M${pts.join(' L')}`
+}
+
+function Vortex() {
+  const u = useId().replace(/:/g, '')
+  const arms = [0, 1, 2, 3].map((i) => spiral((i * Math.PI) / 2))
+  const stars = useMemo(() => {
+    const r = seeded(23)
+    return Array.from({ length: 70 }, (_, i) => {
+      const arm = i % 4
+      const t = 0.15 + r() * 0.85
+      const rad = 14 + 172 * t * t
+      const a = (arm * Math.PI) / 2 + t * Math.PI * 1.9 + (r() - 0.5) * 0.35
+      return { x: 200 + Math.cos(a) * rad, y: 200 + Math.sin(a) * rad, s: 0.6 + r() * 1.8, d: (r() * 3).toFixed(2) }
+    })
+  }, [])
+  return (
+    <>
+      <defs>
+        <radialGradient id={`${u}v`}>
+          <stop offset="0" stopColor="#ffffff" />
+          <stop offset="0.25" stopColor="var(--hi)" stopOpacity="0.9" />
+          <stop offset="1" stopColor="var(--core)" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <circle cx="200" cy="200" r="188" className="orb-shell" />
+      <g className="orb-spin orb-s40">
+        {arms.map((d, i) => (
+          <g key={i}>
+            <path d={d} className="orb-arm-glow" />
+            <path d={d} className="orb-arm" />
+          </g>
+        ))}
+        {stars.map((s, i) => (
+          <circle key={i} cx={s.x} cy={s.y} r={s.s} className="orb-spark" style={{ animationDelay: `-${s.d}s` } as CSSProperties} />
+        ))}
+      </g>
+      <g className="orb-core">
+        <circle cx="200" cy="200" r="58" fill={`url(#${u}v)`} className="orb-breathe" />
+        <circle cx="200" cy="200" r="11" fill="#f4fdff" className="orb-heart" />
+      </g>
+    </>
+  )
+}
+
+// -------------------------------------------------------------------- radar
+
+function Radar() {
+  const u = useId().replace(/:/g, '')
+  const blips = useMemo(() => {
+    const r = seeded(31)
+    return Array.from({ length: 9 }, () => {
+      const a = r() * Math.PI * 2
+      const d = 40 + r() * 135
+      return { x: 200 + Math.cos(a) * d, y: 200 + Math.sin(a) * d, d: (r() * 4).toFixed(2) }
+    })
+  }, [])
+  return (
+    <>
+      <defs>
+        <linearGradient id={`${u}s`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="var(--core)" stopOpacity="0" />
+          <stop offset="1" stopColor="var(--hi)" stopOpacity="0.55" />
+        </linearGradient>
+        <radialGradient id={`${u}b`} cx="50%" cy="50%" r="50%">
+          <stop offset="0" stopColor="#06183a" />
+          <stop offset="1" stopColor="#020a1a" />
+        </radialGradient>
+      </defs>
+      <circle cx="200" cy="200" r="182" fill={`url(#${u}b)`} />
+      <circle cx="200" cy="200" r="182" className="orb-ring" />
+      {[60, 105, 145].map((r) => (
+        <circle key={r} cx="200" cy="200" r={r} className="orb-grid-ring" />
+      ))}
+      <line x1="18" y1="200" x2="382" y2="200" className="orb-grid" />
+      <line x1="200" y1="18" x2="200" y2="382" className="orb-grid" />
+      <g className="orb-spin orb-s120">
+        {Array.from({ length: 72 }, (_, i) => {
+          const a = (i / 72) * Math.PI * 2
+          const l = i % 6 === 0 ? 12 : 5
+          return <line key={i} x1={200 + Math.cos(a) * 182} y1={200 + Math.sin(a) * 182} x2={200 + Math.cos(a) * (182 - l)} y2={200 + Math.sin(a) * (182 - l)} className="orb-tick" />
+        })}
+      </g>
+      {/* The sweep: a fading wedge with a bright leading edge. */}
+      <g className="orb-spin orb-sweep">
+        {/* The wedge trails 30° behind the edge it sweeps with (clockwise). */}
+        <path d="M200,200 L382,200 A182,182 0 0,0 357.6,109 Z" fill={`url(#${u}s)`} />
+        <line x1="200" y1="200" x2="382" y2="200" className="orb-sweep-edge" />
+      </g>
+      {blips.map((b, i) => (
+        <circle key={i} cx={b.x} cy={b.y} r="3.5" className="orb-blip" style={{ animationDelay: `-${b.d}s` } as CSSProperties} />
+      ))}
+      <circle cx="200" cy="200" r="4" className="orb-node" />
+    </>
+  )
+}
+
+// ------------------------------------------------------------------ eclipse
+
+function Eclipse() {
+  const u = useId().replace(/:/g, '')
+  const flares = useMemo(() => {
+    const r = seeded(43)
+    return Array.from({ length: 48 }, () => ({ a: r() * Math.PI * 2, l: 18 + r() * 52, d: (r() * 3).toFixed(2) }))
+  }, [])
+  return (
+    <>
+      <defs>
+        <radialGradient id={`${u}c`}>
+          <stop offset="0.6" stopColor="var(--hi)" stopOpacity="0.95" />
+          <stop offset="0.68" stopColor="var(--core)" stopOpacity="0.6" />
+          <stop offset="1" stopColor="var(--core)" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <circle cx="200" cy="200" r="196" fill={`url(#${u}c)`} className="orb-breathe" />
+      <g className="orb-spin orb-s90">
+        {flares.map((f, i) => (
+          <line
+            key={i}
+            x1={200 + Math.cos(f.a) * 124}
+            y1={200 + Math.sin(f.a) * 124}
+            x2={200 + Math.cos(f.a) * (124 + f.l)}
+            y2={200 + Math.sin(f.a) * (124 + f.l)}
+            className="orb-flare"
+            style={{ animationDelay: `-${f.d}s` } as CSSProperties}
+          />
+        ))}
+      </g>
+      <circle cx="200" cy="200" r="122" fill="#02060f" />
+      <circle cx="200" cy="200" r="122" className="orb-rim" />
+      <g className="orb-spin orb-s30 orb-rev">
+        <circle cx="200" cy="200" r="186" className="orb-thin" strokeDasharray="4 10" />
+      </g>
+      {/* The "diamond ring": one bright point travelling the rim. */}
+      <g className="orb-spin orb-s20">
+        <circle cx="200" cy="78" r="7" fill="#ffffff" className="orb-diamond" />
+      </g>
+    </>
+  )
+}
+
+// --------------------------------------------------------------------- gyro
+
+function Gyro() {
+  const u = useId().replace(/:/g, '')
+  return (
+    <>
+      <defs>
+        <radialGradient id={`${u}g`} cx="50%" cy="40%" r="62%">
+          <stop offset="0" stopColor="#0f2f66" />
+          <stop offset="0.7" stopColor="#041027" />
+          <stop offset="1" stopColor="#020a1a" />
+        </radialGradient>
+      </defs>
+      <circle cx="200" cy="200" r="190" className="orb-thin" strokeDasharray="1 6" />
+      {/* Three rings turning on their own axes: an ellipse whose height swings. */}
+      {[0, 60, 120].map((rot, i) => (
+        <g key={rot} transform={`rotate(${rot} 200 200)`}>
+          <ellipse cx="200" cy="200" rx="172" ry="172" className="orb-gyro" style={{ animationDelay: `-${i * 1.4}s` } as CSSProperties} />
+          <ellipse cx="200" cy="200" rx="172" ry="172" className="orb-gyro orb-gyro-hot" style={{ animationDelay: `-${i * 1.4}s` } as CSSProperties} />
+        </g>
+      ))}
+      <circle cx="200" cy="200" r="112" fill={`url(#${u}g)`} />
+      <circle cx="200" cy="200" r="112" className="orb-ring" />
+      <g className="orb-spin orb-s30">
+        <circle cx="200" cy="200" r="100" className="orb-thin" strokeDasharray="18 8" />
+      </g>
+    </>
+  )
+}
+
+// -------------------------------------------------------------------- globe
+
+function Globe() {
+  const u = useId().replace(/:/g, '')
+  const R = 165
+  return (
+    <>
+      <defs>
+        <radialGradient id={`${u}w`} cx="40%" cy="35%" r="70%">
+          <stop offset="0" stopColor="var(--core)" stopOpacity="0.35" />
+          <stop offset="1" stopColor="var(--deep)" stopOpacity="0.05" />
+        </radialGradient>
+      </defs>
+      <circle cx="200" cy="200" r={R + 18} className="orb-shell" />
+      <circle cx="200" cy="200" r={R} fill={`url(#${u}w)`} />
+      {/* Latitudes, fixed. */}
+      {[-60, -30, 0, 30, 60].map((lat) => {
+        const a = (lat * Math.PI) / 180
+        return <ellipse key={lat} cx="200" cy={200 + Math.sin(a) * R} rx={Math.cos(a) * R} ry={Math.cos(a) * R * 0.16} className="orb-lat" />
+      })}
+      {/* Meridians: each narrows and widens in turn, so the globe turns. */}
+      {Array.from({ length: 6 }, (_, i) => (
+        <ellipse key={i} cx="200" cy="200" rx={R} ry={R} className="orb-meridian" style={{ animationDelay: `-${i}s` } as CSSProperties} />
+      ))}
+      <circle cx="200" cy="200" r={R} className="orb-ring" />
+      <g className="orb-spin orb-s20">
+        <circle cx="200" cy="200" r={R + 18} className="orb-ring-hot" strokeDasharray="60 1080" />
       </g>
     </>
   )

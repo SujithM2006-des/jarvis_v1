@@ -24,10 +24,13 @@ const FILE = join(homedir(), '.jarvis', 'profile.json')
 export const FEATURES = ['whatsapp', 'browser', 'camera', 'pc']
 
 /** Colour presets for the interface (a hue turn from the stock blue). */
-export const THEMES = { blue: 0, purple: 70, crimson: 150, amber: 200, green: -60, teal: -25 }
+export const THEMES = {
+  blue: 0, teal: -25, green: -60, purple: 70, crimson: 150, amber: 200,
+  orange: 180, yellow: 220, lime: -110, indigo: 30, magenta: 115,
+}
 
 /** Centre orb designs (src/custom/orbs.tsx). */
-export const ORBS = ['reactor', 'atom', 'nebula', 'pulse', 'prism']
+export const ORBS = ['reactor', 'atom', 'nebula', 'pulse', 'prism', 'vortex', 'radar', 'eclipse', 'gyro', 'globe']
 
 const DEFAULTS = {
   name: '',

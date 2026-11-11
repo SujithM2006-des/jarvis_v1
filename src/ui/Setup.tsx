@@ -13,14 +13,41 @@ import './setup.css'
  * the bridge, where it is fixed in the code — it is not a setting.
  */
 
+/**
+ * The interface's blue turned by `deg`, with the same matrix as CSS
+ * hue-rotate() — so each swatch shows exactly the colour the interface (and
+ * the popup, which uses the same maths) will take.
+ */
+function turned(hex: string, deg: number) {
+  const n = parseInt(hex.slice(1), 16)
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+  const a = (deg * Math.PI) / 180
+  const c = Math.cos(a)
+  const s = Math.sin(a)
+  const ch = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')
+  return (
+    '#' +
+    ch(r * (0.213 + c * 0.787 - s * 0.213) + g * (0.715 - c * 0.715 - s * 0.715) + b * (0.072 - c * 0.072 + s * 0.928)) +
+    ch(r * (0.213 - c * 0.213 + s * 0.143) + g * (0.715 + c * 0.285 + s * 0.14) + b * (0.072 - c * 0.072 - s * 0.283)) +
+    ch(r * (0.213 - c * 0.213 - s * 0.787) + g * (0.715 - c * 0.715 + s * 0.715) + b * (0.072 + c * 0.928 + s * 0.072))
+  )
+}
+
+// In hue order round the wheel. Hues must match bridge/profile.mjs and
+// scripts/popup.ps1.
 const THEMES: { id: string; label: string; hue: number; swatch: string }[] = [
-  { id: 'blue', label: 'Blue', hue: 0, swatch: '#3fb6ff' },
-  { id: 'teal', label: 'Teal', hue: -25, swatch: '#2fe0c8' },
-  { id: 'green', label: 'Green', hue: -60, swatch: '#3fe07a' },
-  { id: 'purple', label: 'Purple', hue: 70, swatch: '#a46bff' },
-  { id: 'crimson', label: 'Crimson', hue: 150, swatch: '#ff4f6d' },
-  { id: 'amber', label: 'Amber', hue: 200, swatch: '#ffb43f' },
-]
+  ['blue', 'Blue', 0],
+  ['indigo', 'Indigo', 30],
+  ['purple', 'Purple', 70],
+  ['magenta', 'Magenta', 115],
+  ['crimson', 'Crimson', 150],
+  ['orange', 'Orange', 180],
+  ['amber', 'Amber', 200],
+  ['yellow', 'Yellow', 220],
+  ['lime', 'Lime', -110],
+  ['green', 'Green', -60],
+  ['teal', 'Teal', -25],
+].map(([id, label, hue]) => ({ id: id as string, label: label as string, hue: hue as number, swatch: turned('#3fb6ff', hue as number) }))
 
 const FEATURES: { id: string; label: string; note: string }[] = [
   { id: 'pc', label: 'PC control', note: 'Open apps, manage files, run commands' },

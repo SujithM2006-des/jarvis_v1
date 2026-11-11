@@ -44,7 +44,8 @@ function Starting { ((Get-Date) - $script:lastStart).TotalSeconds -lt 60 }
 # interface's CSS hue-rotate, with the same matrix, so the two match exactly.
 # The mute red stays red: it means "muted" whatever the theme.
 $profileFile = Join-Path $env:USERPROFILE '.jarvis\profile.json'
-$themeHues = @{ blue = 0; teal = -25; green = -60; purple = 70; crimson = 150; amber = 200 }
+$themeHues = @{ blue = 0; teal = -25; green = -60; purple = 70; crimson = 150; amber = 200
+                orange = 180; yellow = 220; lime = -110; indigo = 30; magenta = 115 }
 function Get-Theme {
   try { $t = ([IO.File]::ReadAllText($profileFile) | ConvertFrom-Json).theme } catch { $t = $null }
   if ($t -and $themeHues.ContainsKey($t)) { $t } else { 'blue' }
@@ -461,11 +462,14 @@ $timer = New-Object System.Windows.Threading.DispatcherTimer
 # 250 ms: still reads as live, at well under half the background work of 150.
 $timer.Interval = [TimeSpan]::FromMilliseconds(250)
 $script:themeTick = 0
+$aliveFile = Join-Path $env:USERPROFILE '.jarvis\popup-alive'
 $timer.Add_Tick({
   # A new colour chosen in the interface: every couple of seconds, look; if it
   # changed, open a fresh popup in that colour, in the same place, and close
   # this one. (The colours are baked in when the panel is built.)
   $script:themeTick = ($script:themeTick + 1) % 8
+  # Alive: the bridge reopens the popup when this goes stale (popup mode).
+  if ($script:themeTick -eq 0) { try { [IO.File]::WriteAllText($aliveFile, [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) } catch {} }
   if ($script:themeTick -eq 0 -and (Get-Theme) -ne $script:theme) {
     $timer.Stop()
     try {

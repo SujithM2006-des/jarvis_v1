@@ -157,12 +157,18 @@ function run(name, command, args, colour, env, { restart = false } = {}) {
         return
       }
       // Exit code 3 is "port taken" (another JARVIS already running): final.
-      if (restart && code !== 0 && code !== 3 && crashes.length < RESTARTS) {
+      //
+      // Otherwise the brain always comes back. It used to stop after five
+      // crashes in ten minutes and take all of JARVIS down with it; now a run
+      // of crashes only slows the retries (30 s apart), so a bad patch can
+      // never leave him disconnected for good.
+      if (restart && code !== 0 && code !== 3) {
         crashes.push(now)
-        console.log(`\x1b[${colour}m${name}\x1b[0m crashed (${code}); restarting (${crashes.length}/${RESTARTS}).`)
+        const wait = crashes.length >= RESTARTS ? 30_000 : 2000
+        console.log(`\x1b[${colour}m${name}\x1b[0m crashed (${code}); restarting in ${wait / 1000}s.`)
         setTimeout(() => {
           if (!stopping) start()
-        }, 2000)
+        }, wait)
         return
       }
       // Otherwise the other half is useless without it: take the whole thing
