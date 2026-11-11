@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import {
   ask,
   greeting,
@@ -169,6 +169,7 @@ function WeatherArt({ cond }: { cond: string }) {
 function Panel({ title, icon, extra, className = '', i = 0, children }: { title: string; icon: ReactNode; extra?: ReactNode; className?: string; i?: number; children: ReactNode }) {
   return (
     <section className={`vg-panel ${className}`} style={{ '--i': i } as CSSProperties}>
+      <i className="vg-tk vg-tk-tl" /><i className="vg-tk vg-tk-br" />
       <header className="vg-ph">
         <span className="vg-ph-icon"><Icon size={14}>{icon}</Icon></span>
         <span className="vg-ph-title">{title}</span>
@@ -424,7 +425,16 @@ function Reactor({ phase, level, line }: { phase: JarvisPhase; level: number; li
             <stop offset="0.6" stopColor="#051330" />
             <stop offset="1" stopColor="#020a1a" />
           </radialGradient>
+          <path id="vg-orbit-path" d="M200,200 m-208,0 a208,208 0 1,1 416,0 a208,208 0 1,1 -416,0" />
         </defs>
+        {/* An orbiting legend, slowly turning — the core's own readout. */}
+        <g className="vg-spin-text">
+          <text className="vg-orbit-text">
+            <textPath href="#vg-orbit-path">
+              {`J.A.R.V.I.S  ·  NEURAL CORE  ·  ${(phaseLabel[phase] ?? 'Online').toUpperCase()}  ·  VOICE LINK  ·  J.A.R.V.I.S  ·  NEURAL CORE  ·  ${(phaseLabel[phase] ?? 'Online').toUpperCase()}  ·  VOICE LINK  ·`}
+            </textPath>
+          </text>
+        </g>
         <g className="vg-spin-slow">
           {Array.from({ length: 90 }, (_, i) => {
             const a = (i / 90) * Math.PI * 2
@@ -467,7 +477,40 @@ function Reactor({ phase, level, line }: { phase: JarvisPhase; level: number; li
   )
 }
 
-function Conversation() {
+/** One step of what he is doing for the current request. */
+type Step = { id: number; label: string; kind: 'listen' | 'think' | 'tool' | 'speak' | 'done'; at: string }
+
+const toolLabel = (t: string) => t.replace(/^mcp__[^_]+(_[^_]+)*__/, '').replace(/[_-]+/g, ' ').trim()
+
+/** The agent trace: Listening › Thinking › <tools> › Responding › Done. */
+function AgentTrace({ steps }: { steps: Step[] }) {
+  if (!steps.length) return null
+  return (
+    <div className="vg-trace">
+      <span className="vg-trace-k">Agent</span>
+      {steps.map((s, i) => (
+        <Fragment key={s.id}>
+          {i > 0 && <span className="vg-trace-arrow">›</span>}
+          <span className={`vg-step vg-step-${s.kind} ${i === steps.length - 1 && s.kind !== 'done' ? 'vg-step-live' : ''}`}>
+            <i />
+            {s.label}
+            <small>{s.at}</small>
+          </span>
+        </Fragment>
+      ))}
+    </div>
+  )
+}
+
+const SUGGESTIONS = [
+  'Brief me',
+  "What's on my calendar today?",
+  'Weather here',
+  'Which apps use the most memory?',
+  'Any unread WhatsApp messages?',
+]
+
+function Conversation({ idle }: { idle: boolean }) {
   const { turns } = useJarvis()
   const ref = useRef<HTMLDivElement>(null)
   const recent = turns.slice(-4)
@@ -475,16 +518,31 @@ function Conversation() {
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight
   }, [turns])
   return (
-    <div className="vg-convo" ref={ref}>
-      {recent.length === 0 ? (
-        <div className="vg-convo-empty">Say “Hey Jarvis”, tap the mic, or type below.</div>
-      ) : (
-        recent.map((t) => (
-          <div key={t.id} className={`vg-msg vg-${t.role}`}>
-            <span className="vg-who">{t.role === 'user' ? 'You' : 'Jarvis'}</span>
-            <span className="vg-said">{t.text}</span>
-          </div>
-        ))
+    <div className="vg-convo-wrap">
+      <div className="vg-convo" ref={ref}>
+        {recent.length === 0 ? (
+          <div className="vg-convo-empty">Say “Hey Jarvis”, tap the mic, or type below.</div>
+        ) : (
+          recent.map((t) => (
+            <div key={t.id} className={`vg-msg vg-${t.role}`}>
+              <span className="vg-who">
+                <span className="vg-badge">{t.role === 'user' ? 'U' : 'J'}</span>
+                {t.role === 'user' ? 'You' : 'Jarvis'}
+              </span>
+              <span className="vg-said">{t.text}</span>
+            </div>
+          ))
+        )}
+      </div>
+      {/* Idle: a few one-tap requests, like any good agent console. */}
+      {idle && (
+        <div className="vg-suggest">
+          {SUGGESTIONS.map((q) => (
+            <button key={q} type="button" onClick={() => void ask(q)}>
+              {q}
+            </button>
+          ))}
+        </div>
       )}
     </div>
   )
@@ -546,6 +604,34 @@ export default function CustomLayout() {
   // Their name from JARVIS's memory; "sir" until he knows it.
   const NAME = s?.name || 'sir'
 
+  // The agent trace for the current request, built from his phase changes.
+  const [trace, setTrace] = useState<Step[]>([])
+  const stepId = useRef(0)
+  useEffect(() => {
+    const at = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' }).replace(/\s?[AP]M$/, '')
+    if (phase === 'dormant') {
+      setTrace((t) => (t.length && t[t.length - 1].kind !== 'done' ? [...t, { id: ++stepId.current, label: 'Done', kind: 'done', at }] : t))
+      return
+    }
+    const step: Pick<Step, 'label' | 'kind'> | null =
+      phase === 'listening' || phase === 'waking'
+        ? { label: 'Listening', kind: 'listen' }
+        : phase === 'thinking'
+          ? { label: 'Thinking', kind: 'think' }
+          : phase === 'tooling'
+            ? { label: activeTool ? toolLabel(activeTool) : 'Working', kind: 'tool' }
+            : phase === 'speaking'
+              ? { label: 'Responding', kind: 'speak' }
+              : null
+    if (!step) return
+    setTrace((t) => {
+      if (t.length && t[t.length - 1].label === step.label) return t
+      // A new request (listening after a finished one) starts a fresh trace.
+      const base = step.kind === 'listen' && (!t.length || t[t.length - 1].kind === 'done') ? [] : t
+      return [...base, { id: ++stepId.current, ...step, at }].slice(-7)
+    })
+  }, [phase, activeTool])
+
   const hm = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }).split(' ')[0]
   const ampm = now.getHours() < 12 ? 'AM' : 'PM'
   const secs = now.getSeconds()
@@ -603,9 +689,20 @@ export default function CustomLayout() {
         </div>
         <div className="vg-head-mid">
           <span className="vg-hm-line" />
-          <span className="vg-hm-label">
-            <span className="vg-eq"><i /><i /><i /><i /></span>
-            {phase === 'offline' ? 'Systems offline' : 'All systems nominal'}
+          {/* Live system chips: the link to the brain, voice and microphone. */}
+          <span className="vg-sys">
+            <span className={`vg-sc ${phase !== 'offline' && s ? 'vg-ok' : 'vg-bad'}`}>
+              <i />
+              Link
+            </span>
+            <span className={`vg-sc ${phase === 'offline' ? 'vg-bad' : 'vg-ok'}`}>
+              <span className="vg-eq"><i /><i /><i /><i /></span>
+              Voice · {phaseLabel[phase] ?? 'Online'}
+            </span>
+            <span className={`vg-sc ${muted ? 'vg-bad' : 'vg-ok'}`}>
+              <i />
+              Mic {muted ? 'muted' : 'live'}
+            </span>
           </span>
           <span className="vg-hm-line vg-flip" />
         </div>
@@ -688,7 +785,8 @@ export default function CustomLayout() {
       {/* Centre */}
       <main className="vg-centre">
         <Reactor phase={phase} level={level} line={line} />
-        <Conversation />
+        <AgentTrace steps={trace} />
+        <Conversation idle={phase === 'dormant'} />
       </main>
 
       {/* Right column */}

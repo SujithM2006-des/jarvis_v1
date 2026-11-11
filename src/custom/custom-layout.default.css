@@ -1255,3 +1255,172 @@ body {
   --accent: #3fb6ff !important;
   --interface: #3fb6ff !important;
 }
+/* ------------------------------------------- agent console refinements */
+
+/* Corner ticks on every panel: HUD registration marks. */
+.vg-tk {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-color: rgba(120, 200, 255, 0.7);
+  border-style: solid;
+  pointer-events: none;
+  z-index: 1;
+}
+.vg-tk-tl { top: 6px; left: 6px; border-width: 1.5px 0 0 1.5px; }
+.vg-tk-br { bottom: 6px; right: 6px; border-width: 0 1.5px 1.5px 0; }
+
+/* The orbiting legend around the core. */
+.vg-orbit-text {
+  fill: color-mix(in srgb, var(--hi) 70%, transparent);
+  font: 600 9.5px 'JetBrains Mono', monospace;
+  letter-spacing: 3.2px;
+}
+.vg-spin-text { transform-origin: 200px 200px; animation: vg-spin 60s linear infinite reverse; }
+
+/* Header: live system chips. */
+.vg-sys { display: inline-flex; gap: 8px; }
+.vg-sc {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  background: rgba(6, 18, 42, 0.7);
+  font: 500 10.5px 'JetBrains Mono', monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.vg-sc > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.vg-sc.vg-ok > i { background: #5fe3a1; box-shadow: 0 0 8px #5fe3a1; animation: vg-blink 2.4s ease-in-out infinite; }
+.vg-sc.vg-bad { color: #ffaaaa; border-color: rgba(255, 110, 110, 0.4); }
+.vg-sc.vg-bad > i { background: #ff6b6b; box-shadow: 0 0 8px #ff6b6b; }
+
+/* Centre: reactor, then the agent trace, then the conversation. */
+.vg-centre { grid-template-rows: minmax(0, 1fr) auto auto; }
+
+.vg-trace {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  max-width: min(760px, 100%);
+  animation: vg-fade 0.4s ease both;
+}
+.vg-trace-k {
+  font: 600 10px 'JetBrains Mono', monospace;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-right: 4px;
+}
+.vg-trace-arrow { color: var(--ink-3); font-size: 13px; }
+.vg-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--edge);
+  background: rgba(6, 18, 42, 0.75);
+  font-size: 12px;
+  color: var(--ink-2);
+  text-transform: capitalize;
+  animation: vg-rise 0.35s var(--ease) both;
+}
+.vg-step small {
+  font: 400 10px 'JetBrains Mono', monospace;
+  color: var(--ink-3);
+}
+.vg-step > i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.vg-step-think > i { background: #8fa0ff; }
+.vg-step-tool > i { background: #ffb85c; }
+.vg-step-speak > i { background: #7fd0ff; }
+.vg-step-done > i { background: #5fe3a1; }
+.vg-step-live {
+  color: #fff;
+  border-color: var(--edge-hi);
+  box-shadow: 0 0 14px rgba(31, 120, 255, 0.3);
+}
+.vg-step-live > i { animation: vg-blink 0.9s ease-in-out infinite; box-shadow: 0 0 8px currentColor; }
+
+/* Conversation: badges, and suggestions when idle. */
+.vg-convo-wrap {
+  width: min(760px, 100%);
+  display: grid;
+  gap: 8px;
+}
+.vg-convo { width: 100%; }
+.vg-msg { grid-template-columns: 84px 1fr; }
+.vg-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.vg-badge {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font: 700 10px 'Orbitron', sans-serif;
+  letter-spacing: 0;
+  color: #fff;
+  background: rgba(120, 140, 170, 0.35);
+}
+.vg-jarvis .vg-badge { background: linear-gradient(135deg, #3fb6ff, #1546d6); box-shadow: 0 0 10px rgba(63, 182, 255, 0.5); }
+.vg-jarvis { border-left: 2px solid var(--accent); }
+.vg-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  animation: vg-fade 0.5s ease both 0.2s;
+}
+.vg-suggest button {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--edge) !important;
+  background: rgba(6, 18, 42, 0.7) !important;
+  font-size: 12px !important;
+  color: var(--ink-2) !important;
+  transition: all 0.2s var(--ease);
+}
+.vg-suggest button:hover {
+  color: #fff !important;
+  border-color: var(--edge-hi) !important;
+  background: rgba(63, 182, 255, 0.16) !important;
+  box-shadow: 0 0 14px rgba(31, 120, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+/* A slow scan line across the whole console. */
+.vg-bg::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 120px;
+  background: linear-gradient(to bottom, transparent, rgba(63, 182, 255, 0.05), transparent);
+  animation: vg-sweep 9s linear infinite;
+}
+@keyframes vg-sweep { from { top: -120px; } to { top: 100%; } }
+/* Room for the orbiting legend: the core sits a little lower and smaller,
+   so the text ring clears the header. */
+.vg-reactor {
+  max-height: 50vh;
+  margin-top: 4.5vh;
+}
+.vg-step { height: 24px; font-size: 11.5px; }
