@@ -1,6 +1,6 @@
 import os from 'node:os'
 import { ps } from './pc.mjs'
-import { upcoming, weatherData } from './assistant.mjs'
+import { upcoming, userName, weatherData } from './assistant.mjs'
 
 /**
  * Live readings for the HUD's gauges, served at GET /status.
@@ -28,7 +28,7 @@ function cpuPercent() {
   return total > 0 ? Math.round(100 * (1 - idle / total)) : 0
 }
 
-let slow = { at: 0, data: { battery: null, charging: false, wifi: null, signal: null, diskFree: null, diskTotal: null } }
+let slow = { at: 0, data: { gpu: null, battery: null, charging: false, wifi: null, signal: null, diskFree: null, diskTotal: null } }
 let slowBusy = false
 
 async function refreshSlow() {
@@ -39,7 +39,14 @@ async function refreshSlow() {
 $b = Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
 $w = netsh wlan show interfaces 2>$null | Out-String
 $d = Get-PSDrive C
+# GPU: the 3D engines' utilisation, summed across processes.
+$g = $null
+try {
+  $s = (Get-Counter '\\GPU Engine(*engtype_3D)\\Utilization Percentage' -ErrorAction Stop).CounterSamples
+  $g = [math]::Min(100, [math]::Round(($s | Measure-Object CookedValue -Sum).Sum))
+} catch {}
 [pscustomobject]@{
+  gpu      = $g
   battery  = if ($b) { [int]$b.EstimatedChargeRemaining } else { $null }
   charging = if ($b) { @(2,3,6,7,8,9) -contains [int]$b.BatteryStatus } else { $true }
   wifi     = [regex]::Match($w, '(?m)^\\s*SSID\\s*:\\s*(.+)$').Groups[1].Value.Trim()
@@ -51,6 +58,7 @@ $d = Get-PSDrive C
     slow = {
       at: Date.now(),
       data: {
+        gpu: typeof v.gpu === 'number' ? v.gpu : null,
         battery: v.battery,
         charging: Boolean(v.charging),
         wifi: v.wifi || null,
@@ -95,6 +103,8 @@ export function status() {
     uptime: Math.round(os.uptime()),
     host: os.hostname(),
     user: os.userInfo().username,
+    // How to address them, from what JARVIS remembers (not hard-coded).
+    name: userName(),
     ...slow.data,
     weather,
     reminders: upcoming(4),

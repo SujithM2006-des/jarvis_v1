@@ -397,7 +397,8 @@ $labels = @{ dormant = 'standby'; waking = 'listening'; listening = 'listening';
              tooling = 'working'; speaking = 'speaking'; boot = 'starting'; offline = 'offline' }
 $last = ''
 $timer = New-Object System.Windows.Threading.DispatcherTimer
-$timer.Interval = [TimeSpan]::FromMilliseconds(150)
+# 250 ms: still reads as live, at well under half the background work of 150.
+$timer.Interval = [TimeSpan]::FromMilliseconds(250)
 $timer.Add_Tick({
   try {
     $s = Invoke-RestMethod -Uri "$bridge/popup/state" -Headers (Auth) -TimeoutSec 1

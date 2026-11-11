@@ -14,6 +14,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "node --test",
+    "postinstall": "node scripts/ensure-custom.mjs",
     "preview": "vite preview",
     "bridge": "node bridge/server.mjs",
     "bridge:writes": "node bridge/server.mjs --writes",

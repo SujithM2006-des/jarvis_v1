@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { BRIDGE_HTTP_URL } from '../config'
 import { useStore } from '../store'
 
@@ -18,6 +18,10 @@ export type Status = {
   uptime: number
   host: string
   user: string
+  /** Their first name, from JARVIS's memory; null if unknown. */
+  name: string | null
+  /** GPU 3D-engine use, 0–100; refreshed every 30 s. */
+  gpu: number | null
   battery: number | null
   charging: boolean
   wifi: string | null
@@ -36,6 +40,69 @@ export type Status = {
     rain: number
   } | null
   reminders: { at: string; text: string; kind: string; repeat: string | null }[]
+}
+
+// ---------------------------------------------------------------------------
+// Hiding stock parts
+// ---------------------------------------------------------------------------
+
+/** Stock parts a layout can replace. */
+export type StockPart =
+  | 'frame' | 'header' | 'telemetry' | 'dock' | 'suggestions' | 'scene'
+  | 'scanlines' | 'caption' | 'hints' | 'transcript'
+
+let hidden: readonly string[] = []
+const hiddenSubs = new Set<() => void>()
+
+/** Set which stock parts are hidden (cl-hide-* classes, see hide.css). */
+export function setHidden(parts: readonly string[]) {
+  const root = document.documentElement
+  for (const c of [...root.classList]) if (c.startsWith('cl-hide-')) root.classList.remove(c)
+  for (const p of parts) root.classList.add(`cl-hide-${p}`)
+  hidden = [...parts]
+  hiddenSubs.forEach((f) => f())
+}
+
+/** The stock parts hidden right now — the app skips rendering them entirely. */
+export function useHidden(): readonly string[] {
+  return useSyncExternalStore(
+    (f) => {
+      hiddenSubs.add(f)
+      return () => hiddenSubs.delete(f)
+    },
+    () => hidden,
+  )
+}
+
+/**
+ * Called at the top of a layout: the stock parts it replaces. Kept inside the
+ * layout (not a second export) so the file holds nothing but the component —
+ * which lets a new layout swap in live instead of reloading the page, which
+ * used to cut off the conversation that asked for it.
+ */
+export function useHide(parts: readonly StockPart[]) {
+  const key = parts.join(',')
+  useEffect(() => {
+    setHidden(key ? key.split(',') : [])
+    return () => setHidden([])
+  }, [key])
+}
+
+// The safety net (LayoutBoundary) is told to give a corrected layout another go.
+const retrySubs = new Set<() => void>()
+export function onLayoutRetry(fn: () => void) {
+  retrySubs.add(fn)
+  return () => retrySubs.delete(fn)
+}
+export function retryLayout() {
+  retrySubs.forEach((f) => f())
+}
+let layoutError: string | null = null
+export function reportLayoutError(message: string | null) {
+  layoutError = message
+}
+export function lastLayoutError() {
+  return layoutError
 }
 
 /** PC readings, weather and reminders from the bridge, refreshed every few seconds. */

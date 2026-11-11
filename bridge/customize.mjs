@@ -58,8 +58,9 @@ const LAYOUT_BACKUPS = join(homedir(), '.jarvis', 'ui-layouts')
 const STOCK_LAYOUT =
   '/* No custom layout: the stock interface. JARVIS writes one here when asked to\n' +
   '   restyle himself from a picture (bridge/customize.mjs → ui_layout_apply). */\n' +
-  'export const hide: string[] = []\n' +
-  'export default null\n'
+  'export default function CustomLayout() {\n' +
+  '  return null\n' +
+  '}\n'
 const HIDE_PARTS = ['frame', 'header', 'telemetry', 'dock', 'suggestions', 'scene', 'scanlines', 'caption', 'hints', 'transcript']
 
 const readText = (f) => {
@@ -122,13 +123,42 @@ export function layoutProblems(tsx) {
       problems.push(`import from "${m[1]}" is not allowed — only 'react', './kit' and './custom-layout.css'`)
     }
   }
-  if (!/export\s+default\s+function|export\s+default\s+[A-Z]/.test(tsx)) problems.push('there is no `export default` component')
-  if (!/export\s+const\s+hide\b/.test(tsx)) problems.push('there is no `export const hide = [...]`')
+  if (!/export\s+default\s+function\s+CustomLayout\b/.test(tsx)) {
+    problems.push('there is no `export default function CustomLayout()`')
+  }
+  // Anything else exported makes the dev server reload the whole page instead
+  // of swapping the layout in live — which cut off the conversation.
+  for (const m of tsx.matchAll(/^\s*export\s+(?!default\s+function\s+CustomLayout\b)(\S+)/gm)) {
+    problems.push(`only the default component may be exported (found \`export ${m[1]}\` — use useHide([...]) for hidden parts)`)
+  }
+  if (!/\buseHide\s*\(/.test(tsx)) problems.push('call useHide([...]) at the top of the component to name the stock parts it replaces (an empty list is fine)')
   if (/dangerouslySetInnerHTML|\beval\s*\(|new\s+Function\s*\(|\bfetch\s*\(|XMLHttpRequest|WebSocket|window\.location|document\.cookie|import\s*\(/.test(tsx)) {
     problems.push('it uses something a layout may not (innerHTML, eval, fetch, sockets, navigation, dynamic import) — use the kit instead')
   }
   if (tsx.length > 120_000) problems.push('it is too large (120 KB limit)')
   return problems
+}
+
+// Offline transcription: scripts/transcribe.py in the wake listener's Python.
+const TRANSCRIBE = join(REPO, 'scripts', 'transcribe.py')
+const PYTHON = join(homedir(), '.jarvis', 'wake-venv', 'Scripts', 'python.exe')
+
+/** A 44-byte WAV header for 16-bit mono PCM. */
+function wavHeader(bytes, rate) {
+  const h = Buffer.alloc(44)
+  h.write('RIFF', 0); h.writeUInt32LE(36 + bytes, 4); h.write('WAVE', 8)
+  h.write('fmt ', 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22)
+  h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34)
+  h.write('data', 36); h.writeUInt32LE(bytes, 40)
+  return h
+}
+
+function runPython(script, args, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    if (!existsSync(PYTHON)) return reject(new Error('the offline speech engine (~/.jarvis/wake-venv) is not installed'))
+    execFile(PYTHON, [script, ...args], { timeout: timeoutMs, windowsHide: true, maxBuffer: 16 * 1024 * 1024, encoding: 'utf8' },
+      (err, stdout, stderr) => (err ? reject(new Error(String(stderr || err.message).trim().split('\n').pop())) : resolve(stdout)))
+  })
 }
 
 const AUDIO = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.webm', '.flac', '.mp4'])
@@ -313,9 +343,10 @@ export function customizeServer({ ask, allowWrites }) {
           readText(KIT).trim(),
           '```',
           '',
-          `Stock parts a layout can hide via \`export const hide = [...]\`: ${HIDE_PARTS.join(', ')}.`,
-          'Rules: import only from "react", "./kit" and "./custom-layout.css"; default-export the',
-          'component; export `hide`. The layout is drawn over the 3D scene and under the HUD\'s live',
+          `Stock parts a layout can hide with useHide([...]) at the top of the component: ${HIDE_PARTS.join(', ')}.`,
+          'Rules: import only from "react", "./kit" and "./custom-layout.css"; the ONLY export is',
+          '`export default function CustomLayout()` (anything else exported reloads the page and cuts',
+          'off this conversation). The layout is drawn over the 3D scene and under the HUD\'s live',
           'parts (panels, article blades, transcript, tool badge), which stay. Root element: position',
           'fixed, inset 0, pointer-events none, with pointer-events auto on anything clickable. Use',
           'vw/vh so it fits any window. Every figure must be real (kit) — no made-up numbers.',
@@ -362,19 +393,41 @@ export function customizeServer({ ask, allowWrites }) {
                 if (errors.length) {
                   return fail(`Not applied — the layout does not compile. Fix these and apply again:\n${errors.slice(0, 25).join('\n')}`)
                 }
+                const previous = { tsx: readText(LAYOUT_TSX), css: readText(LAYOUT_CSS) }
                 backupLayout()
                 const header = `/* ${String(description ?? '').replace(/\*\//g, '').slice(0, 200)} — ${new Date().toLocaleString('en-IN')} */\n`
                 writeFileSync(LAYOUT_CSS, header + style.trim() + '\n')
                 writeFileSync(LAYOUT_TSX, code.trim() + '\n')
                 console.log(`[jarvis] custom layout applied: ${description}`)
-                // A new layout reloads the page; give it time to come back up.
-                const shot = await showAndShoot(7000).catch(() => null)
+                // Swapped in live; bring the window up so it can be checked.
+                const shot = await showAndShoot(2500).catch(() => null)
+                // Did it render, and does it run smoothly? Rolled back if not,
+                // so a broken or sluggish layout never stays on screen.
+                let check = null
+                try {
+                  check = await ask('layout-check', {}, 15_000)
+                } catch {
+                  /* window not connected: nothing to measure */
+                }
+                const broken = check?.layoutError
+                const slow = typeof check?.fps === 'number' && check.fps < 20
+                if (broken || slow) {
+                  writeFileSync(LAYOUT_TSX, previous.tsx || STOCK_LAYOUT)
+                  writeFileSync(LAYOUT_CSS, previous.css)
+                  console.log(`[jarvis] custom layout rolled back: ${broken ? `crashed (${broken})` : `${check.fps} fps`}`)
+                  return fail(
+                    broken
+                      ? `Rolled back — the layout crashed while rendering: ${broken}. Fix it and apply again.`
+                      : `Rolled back — the layout ran at only ${check.fps} frames a second (needs 20+). Use fewer or lighter animations and filters, and apply again.`,
+                  )
+                }
                 return {
                   content: [
                     {
                       type: 'text',
                       text:
-                        'Applied and saved (it stays after a restart). ' +
+                        'Applied and saved (it stays after a restart)' +
+                        (typeof check?.fps === 'number' ? `, rendering cleanly at ${check.fps} fps. ` : '. ') +
                         (shot
                           ? 'Here is how you look now — compare it with their picture; apply again if anything is clearly off.'
                           : 'Your window could not be photographed, so ask the user how it looks.'),
@@ -492,6 +545,42 @@ export function customizeServer({ ask, allowWrites }) {
 
   const voiceTools = [
     tool(
+      'transcribe_audio',
+      'Write out what is said in an audio recording — a voice note, lecture, call or meeting the ' +
+        'user attached or named ("transcribe this", "what does this recording say", "summarise ' +
+        'this voice note"). Offline, on this PC. Up to ten minutes; accuracy is good for clear ' +
+        'English and rougher for noisy audio or other languages — say so if the text looks garbled.',
+      { path: z.string().describe('The audio file: an attached path, or e.g. "downloads\\\\note.m4a".') },
+      async ({ path }) => {
+        try {
+          const file = await resolveUserPath(path)
+          const bad = protectedProblem(file)
+          if (bad) return fail(`Refused: ${bad}.`)
+          const ext = extname(file).toLowerCase()
+          if (!AUDIO.has(ext)) return fail(`${ext || 'That'} is not an audio file I can read.`)
+          if ((await stat(file)).size > 40 * 1024 * 1024) return fail('That recording is too large (40 MB limit).')
+          const data = (await readFile(file)).toString('base64')
+          const reply = await ask('audio-pcm', { data }, 120_000)
+          if (reply?.error) return fail(`Could not decode it: ${reply.error}`)
+          const pcm = Buffer.from(String(reply.pcm ?? ''), 'base64')
+          if (!pcm.length) return fail('The recording is empty.')
+          const wav = join(tmpdir(), `jarvis-transcribe-${Date.now()}.wav`)
+          writeFileSync(wav, Buffer.concat([wavHeader(pcm.length, 16000), pcm]))
+          try {
+            const text = await runPython(TRANSCRIBE, [wav], 600_000)
+            return ok(
+              (text.trim() ? `Transcript (${reply.seconds}s of audio):\n${text.trim()}` : 'No speech was recognised in it.') +
+                (reply.truncated ? '\n(Only the first ten minutes were transcribed.)' : ''),
+            )
+          } finally {
+            rmSync(wav, { force: true })
+          }
+        } catch (err) {
+          return fail(err.code === 'ENOENT' ? 'That file does not exist.' : `Could not transcribe it: ${err.message}`)
+        }
+      },
+    ),
+    tool(
       'voice_analyze',
       'Measure a voice recording the user gave you — ONLY after they explicitly asked to customise ' +
         'or change your voice ("make your voice like this", "change your voice to sound like this ' +
@@ -568,8 +657,9 @@ export function customizeServer({ ask, allowWrites }) {
     name: 'jarvis_custom',
     version: '1.0.0',
     instructions:
-      'Customising your own look and voice. Use ONLY when the user explicitly asks to customise or ' +
-      'change your UI or voice. Never offer, suggest or ask whether they want to.',
+      'Customising your own look and voice — use those tools ONLY when the user explicitly asks to ' +
+      'customise or change your UI or voice; never offer, suggest or ask whether they want to. ' +
+      'Also transcribe_audio, for writing out what is said in a recording whenever that helps.',
     tools: [...lookTools, ...voiceTools],
   })
 }

@@ -35,3 +35,10 @@ public/ort/
 # Python caches from scripts/wake_listener.py.
 __pycache__/
 *.pyc
+
+# Your own look: rewritten by JARVIS when you ask him to restyle himself, so
+# personal. The project ships *.default.* versions; scripts/ensure-custom.mjs
+# makes these from them when missing.
+src/custom/CustomLayout.tsx
+src/custom/custom-layout.css
+src/custom/user-theme.css

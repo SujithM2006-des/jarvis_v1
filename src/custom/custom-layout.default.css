@@ -1,7 +1,8 @@
 /* "Vanguard" — styles for CustomLayout.tsx. Replaced by JARVIS together with
    the layout when he is asked to restyle himself. */
 
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+/* Orbitron, Inter and JetBrains Mono are stored locally (public/fonts/fonts.css,
+   linked from index.html) — no internet needed. */
 
 :root {
   --bg: #01050e;

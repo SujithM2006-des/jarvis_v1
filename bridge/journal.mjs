@@ -23,8 +23,10 @@ mkdirSync(DIR, { recursive: true })
 /** Kept on disk; older lines are dropped once the file passes this. */
 const MAX_ENTRIES = 5000
 /** Carried into each new session. */
-const RECENT_ENTRIES = 40
-const RECENT_CHARS = 12_000
+// Kept modest: this rides along on every turn of every session, so it is paid
+// for again and again. Anything older is one search_history call away.
+const RECENT_ENTRIES = 24
+const RECENT_CHARS = 7_000
 
 const clip = (s, n) => {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim()

@@ -26,6 +26,8 @@ const BROWSERS = [
   join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Microsoft\\Edge\\Application\\msedge.exe'),
 ]
 
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg)$/i
+
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 /** Inline Markdown: **bold**, *italic*, `code`. Input is already escaped. */
@@ -72,6 +74,22 @@ export function markdownToHtml(md) {
         list = kind
       }
       out.push(`<li>${inline(esc(m[1]))}</li>`)
+    } else if ((m = line.match(/^\s*!\[([^\]]*)\]\(([^)]+)\)\s*$/))) {
+      // An image: a local file only (a screenshot, an attached picture),
+      // shown as a captioned figure. Anything else is left as plain text.
+      flushPara()
+      closeList()
+      const src = m[2].trim().replace(/^["']|["']$/g, '')
+      if (/^[a-z]:[\\/]/i.test(src) && IMAGE_EXT.test(src) && existsSync(src)) {
+        const cap = m[1].trim()
+        out.push(
+          `<figure><img src="${esc(pathToFileURL(src).href)}" alt="${esc(cap)}">` +
+            (cap ? `<figcaption>${inline(esc(cap))}</figcaption>` : '') +
+            '</figure>',
+        )
+      } else {
+        para.push(line.trim())
+      }
     } else if ((m = line.match(/^>\s?(.*)$/))) {
       flushPara()
       closeList()
@@ -103,6 +121,9 @@ li { margin: 2px 0; }
 blockquote { margin: 8px 0; padding: 6px 12px; border-left: 3px solid #0f9d96; color: #3c4650; background: #f3f8f8; }
 code { font-family: Consolas, monospace; background: #f1f3f5; padding: 0 3px; border-radius: 3px; }
 hr { border: 0; border-top: 1px solid #d5dbe0; margin: 14px 0; }
+figure { margin: 12px 0 16px; text-align: center; page-break-inside: avoid; }
+figure img { max-width: 100%; max-height: 120mm; border-radius: 6px; border: 1px solid #d5dbe0; }
+figcaption { margin-top: 6px; font-size: 9.5pt; color: #5b6670; }
 </style></head><body><header><h1>${esc(title)}</h1><div class="date">${date}</div></header>
 ${bodyHtml}
 </body></html>`
@@ -154,7 +175,9 @@ export function documentTools({ ps, resolveUserPath, protectedProblem, ok, fail 
       'Create a PDF document and save it. Use for "make a PDF of this", "create an abstract ' +
         'and save it as PDF", "put these notes in a PDF", "make a report on …". Write the ' +
         'content yourself in Markdown — "## Heading", "- bullet", "1. step", **bold**, ' +
-        'paragraphs separated by blank lines — not HTML. Do not repeat the title inside the ' +
+        'paragraphs separated by blank lines — not HTML. An image on its own line, ' +
+        '![caption](C:\\full\\path\\picture.png), is placed as a figure (a local file: a screenshot ' +
+        'you took, an attached picture). Do not repeat the title inside the ' +
         'content; it is printed at the top with the date. To make one from what is on their ' +
         'screen, call screen_capture first and write from what you actually see. Opens the PDF ' +
         'when done unless open is false.',

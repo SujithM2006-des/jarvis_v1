@@ -86,6 +86,15 @@ const paint = (tag, colour) => (line) =>
  * stripped), so a session that went wrong can be read back afterwards even
  * when the console window it ran in is long gone.
  */
+// Your own look files (gitignored), made from the shipped defaults if missing.
+try {
+  const { ensureCustom } = await import('./ensure-custom.mjs')
+  const made = ensureCustom()
+  if (made.length) console.log(`custom look: made ${made.join(', ')} from the defaults`)
+} catch {
+  /* never a reason not to start */
+}
+
 const LOG_FILE = join(homedir(), '.jarvis', 'jarvis.log')
 try {
   mkdirSync(dirname(LOG_FILE), { recursive: true })

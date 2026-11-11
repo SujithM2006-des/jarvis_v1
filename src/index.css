@@ -1,4 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;600&family=JetBrains+Mono:wght@300;400&display=swap');
+/* Chakra Petch and JetBrains Mono are stored locally: public/fonts/fonts.css,
+   linked from index.html, so nothing here needs the internet. */
 
 :root {
   /* The interface cyan. `--accent` is re-declared per phase and per panel;

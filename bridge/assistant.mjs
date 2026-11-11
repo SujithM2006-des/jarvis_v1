@@ -215,6 +215,25 @@ export function upcoming(n = 4) {
     }))
 }
 
+/**
+ * The user's first name, from memory: "my name is …" / "the user's name is …",
+ * else the name their own WhatsApp chat is saved under, else JARVIS_USER_NAME.
+ * Null when nothing says — the interface then says "sir".
+ */
+export function userName() {
+  const lines = memoryLines()
+  for (const l of lines) {
+    const m = l.match(/\b(?:my|user'?s|the user'?s)\s+name\s+is\s+"?([A-Z][\w'-]+)/i)
+    if (m) return m[1]
+  }
+  for (const l of lines) {
+    if (!/own|yourself/i.test(l)) continue
+    const m = l.match(/saved as\s+"([^"]+)"/i)
+    if (m) return m[1].split(/\s+/)[0]
+  }
+  return process.env.JARVIS_USER_NAME?.trim() || null
+}
+
 /** The remembered city, if a memory line mentions one ("…city is Salem"). */
 function rememberedCity() {
   for (const l of memoryLines()) {

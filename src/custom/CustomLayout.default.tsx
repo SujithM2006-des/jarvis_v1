@@ -10,8 +10,10 @@ import {
   useJarvis,
   useMuted,
   useNow,
+  useHide,
   useStatus,
   type JarvisPhase,
+  type StockPart,
 } from './kit'
 import './custom-layout.css'
 
@@ -26,10 +28,9 @@ import './custom-layout.css'
  * replaces this file and custom-layout.css when asked to restyle himself.
  */
 
-/** Stock parts this layout replaces (see hide.css). */
-export const hide = ['frame', 'header', 'telemetry', 'dock', 'suggestions', 'scene', 'scanlines', 'caption', 'hints', 'transcript']
+/** Stock parts this layout replaces (see hide.css) — applied by useHide below. */
+const HIDE: StockPart[] = ['frame', 'header', 'telemetry', 'dock', 'suggestions', 'scene', 'scanlines', 'caption', 'hints', 'transcript']
 
-const NAME = 'Sujith'
 
 // ------------------------------------------------------------------- icons
 
@@ -430,11 +431,14 @@ const uptime = (s: number) => {
 // ------------------------------------------------------------------ layout
 
 export default function CustomLayout() {
+  useHide(HIDE)
   const now = useNow(1000)
   const s = useStatus()
   const { phase, level, caption, activeTool } = useJarvis()
   const muted = useMuted()
   const [nav, setNav] = useState('home')
+  // Their name from JARVIS's memory; "sir" until he knows it.
+  const NAME = s?.name || 'sir'
 
   const hm = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }).split(' ')[0]
   const ampm = now.getHours() < 12 ? 'AM' : 'PM'
@@ -535,7 +539,7 @@ export default function CustomLayout() {
             <span className="vg-tip">{n.label}</span>
           </button>
         ))}
-        <span className="vg-avatar" title={NAME}>{NAME[0]}</span>
+        <span className="vg-avatar" title={NAME}>{NAME[0].toUpperCase()}</span>
       </nav>
 
       {/* Left column */}
@@ -587,9 +591,10 @@ export default function CustomLayout() {
           <div className="vg-gauges">
             <Gauge label="CPU" value={s ? s.cpu : null} />
             <Gauge label="Memory" value={mem} />
-            <Gauge label="Disk" value={disk} />
+            <Gauge label="GPU" value={s?.gpu ?? null} />
           </div>
           <div className="vg-meters">
+            <Meter icon={I.system} label="Disk C:" value={disk} text={s?.diskFree != null ? `${s.diskFree} GB free` : '—'} />
             <Meter icon={I.battery} label="Battery" value={s?.battery ?? null} text={s?.battery != null ? `${s.battery}%${s.charging ? ' · charging' : ''}` : '—'} />
             <Meter icon={I.wifi} label="Wi-Fi" value={s?.signal ?? null} text={s?.wifi ?? 'Offline'} />
             <Meter icon={I.clock} label="Uptime" value={s ? Math.min(100, (s.uptime / 604800) * 100) : null} text={s ? uptime(s.uptime) : '—'} />

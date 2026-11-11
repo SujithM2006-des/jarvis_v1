@@ -7,11 +7,7 @@ import { Effects } from './Effects'
 import { Pointer } from './Pointer'
 import { GestureGuide } from './GestureGuide'
 import { Telemetry } from './Telemetry'
-import CustomLayout, { hide as layoutHides } from '../custom/CustomLayout'
-
-/** A part a custom layout replaces is not rendered at all — hiding it with CSS
- *  left it running (the telemetry kept polling the bridge every 3 s). */
-const replaced = (part: string) => Boolean(CustomLayout) && (layoutHides as readonly string[]).includes(part)
+import { useHidden } from '../custom/kit'
 
 const statusText: Record<Phase, string> = {
   offline: 'OFFLINE',
@@ -163,6 +159,7 @@ export function Hud() {
   const gestures = useStore((s) => s.gestures)
   const looking = useStore((s) => s.looking)
   const ui = useStore((s) => s.ui)
+  const hiddenNow = useHidden()
 
   // accentFor folds JARVIS's overrides in over the phase colour, so one
   // variable on the root carries a theme change into every .hud-* rule without
@@ -215,7 +212,9 @@ export function Hud() {
           app dock either side of the reactor. It replaces the old SYSTEMS and
           SIGNAL rails (both live on inside it) and hides with the same
           `systems` chrome switch, so ui_chrome can still clear the frame. */}
-      {ui.chrome.systems && !replaced('telemetry') && <Telemetry />}
+      {/* Not rendered at all when a custom layout replaces it: hidden with CSS
+          it kept polling the bridge every 3 s. */}
+      {ui.chrome.systems && !hiddenNow.includes('telemetry') && <Telemetry />}
 
       <AnimatePresence>
         {activeTool && ui.chrome.toolBadge && (

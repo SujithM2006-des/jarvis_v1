@@ -40,6 +40,9 @@ try {
   switch ($env:JARVIS_EXT) {
     '.docx' {
       $x = Read-Part ($z.GetEntry('word/document.xml'))
+      # Tables first: a cell's last paragraph ends the cell (tab), a row ends
+      # the line — so a table reads as rows and columns, not run-on text.
+      $x = $x -replace '</w:p>\s*</w:tc>', $TAB -replace '</w:tr>', $NL
       $x = $x -replace '</w:p>', $NL -replace '<w:tab/>', $TAB -replace '<w:br/>', $NL
       [void]$out.Append((Plain $x))
     }
@@ -74,6 +77,27 @@ try {
   }
 } finally { $z.Dispose() }
 [IO.File]::WriteAllText($env:JARVIS_OUT, $out.ToString(), (New-Object Text.UTF8Encoding $false))
+`
+
+// Old binary Office formats, converted with Office itself (read-only, hidden):
+// .doc → .docx, .xls → .xlsx, .ppt → .pptx, then read like the new ones.
+const UPGRADE = String.raw`
+$src = $env:JARVIS_SRC; $out = $env:JARVIS_OUT
+switch ($env:JARVIS_EXT) {
+  '.doc' {
+    $app = New-Object -ComObject Word.Application; $app.Visible = $false; $app.DisplayAlerts = 0
+    try { $d = $app.Documents.Open($src, $false, $true); $d.SaveAs2($out, 16); $d.Close($false) } finally { $app.Quit() }
+  }
+  '.xls' {
+    $app = New-Object -ComObject Excel.Application; $app.Visible = $false; $app.DisplayAlerts = $false
+    try { $w = $app.Workbooks.Open($src, 0, $true); $w.SaveAs($out, 51); $w.Close($false) } finally { $app.Quit() }
+  }
+  '.ppt' {
+    $app = New-Object -ComObject PowerPoint.Application
+    try { $p = $app.Presentations.Open($src, -1, 0, 0); $p.SaveAs($out, 24); $p.Close() } finally { $app.Quit() }
+  }
+}
+if (-not (Test-Path -LiteralPath $out)) { throw 'conversion produced nothing' }
 `
 
 const CONVERT = String.raw`
@@ -143,14 +167,40 @@ export async function prepareAttachments(paths) {
         items.push({
           name,
           path: copy,
-          note: 'audio recording — not readable with Read; if they asked to change your voice, use voice_analyze on it',
+          note:
+            'audio recording — not readable with Read: use transcribe_audio on it for what is said, ' +
+            'or voice_analyze if they asked to change your voice',
         })
       } else if (OLD_OFFICE.has(ext)) {
-        items.push({
-          name,
-          path: copy,
-          note: `old ${ext} format, which cannot be read — ask them to save it as ${ext}x or PDF`,
-        })
+        // Upgrade with Office, then extract like a modern file. Without
+        // Office (or if it fails), say so plainly.
+        const modern = `${copy}x`
+        const since = new Date().toISOString()
+        try {
+          // Office automation can hang on a dialog it cannot show (activation,
+          // first run) — measured on this PC: Word never returned. Kept short.
+          await ps(UPGRADE, { SRC: copy, OUT: modern, EXT: ext }, 40_000)
+          const txt = `${modern}.txt`
+          await ps(EXTRACT, { SRC: modern, OUT: txt, EXT: `${ext}x` }, 60_000)
+          items.push({ name, path: txt, note: `the text of ${name}, extracted` })
+        } catch {
+          // A stuck conversion leaves a hidden Office process behind; close
+          // the window-less ones this attempt started (never the user's own).
+          await ps(
+            "Get-Process WINWORD, EXCEL, POWERPNT -ErrorAction SilentlyContinue | " +
+              'Where-Object { -not $_.MainWindowTitle -and $_.StartTime -ge [datetime]$env:JARVIS_SINCE } | ' +
+              'Stop-Process -Force -ErrorAction SilentlyContinue',
+            { SINCE: since },
+            15_000,
+          ).catch(() => {})
+          items.push({
+            name,
+            path: copy,
+            note:
+              `old ${ext} format that Microsoft Office could not convert here (it may be waiting on an ` +
+              `activation or first-run prompt) — ask them to save it as ${ext}x or PDF`,
+          })
+        }
       } else {
         items.push({ name, path: copy, note: 'file' })
       }

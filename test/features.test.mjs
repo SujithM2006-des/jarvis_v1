@@ -7,7 +7,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -32,14 +32,16 @@ test('Google Fonts imports are allowed, anything else is refused', () => {
   assert.equal(onlyGoogleFonts("@import url('https://fonts.googleapis.com/a'); @import 'http://x.y/z.css';"), false)
 })
 
-test('a layout may only import react, the kit and its stylesheet', () => {
+test('a layout imports only react, the kit and its stylesheet, and exports only itself', () => {
   const ok =
-    "import { useState } from 'react'\nimport { useNow } from './kit'\nimport './custom-layout.css'\n" +
-    'export const hide = []\nexport default function L() { return null }'
+    "import { useState } from 'react'\nimport { useHide } from './kit'\nimport './custom-layout.css'\n" +
+    "export default function CustomLayout() {\n  useHide(['scene'])\n  return null\n}"
   assert.deepEqual(layoutProblems(ok), [])
   assert.match(layoutProblems(ok.replace("from 'react'", "from 'node:fs'")).join(' '), /not allowed/)
   assert.match(layoutProblems(ok + "\nfetch('https://x')").join(' '), /may not/)
-  assert.match(layoutProblems(ok.replace('export const hide = []', '')).join(' '), /hide/)
+  // A second export would make the page reload and cut off the conversation.
+  assert.match(layoutProblems(ok + '\nexport const hide = []').join(' '), /only the default component/)
+  assert.match(layoutProblems(ok.replace("useHide(['scene'])", '')).join(' '), /useHide/)
 })
 
 test('the journal records, searches and forgets exchanges', () => {
@@ -72,6 +74,15 @@ test('PDF markdown becomes headings, lists and paragraphs, and is escaped', () =
   assert.match(html, /<ul>\n<li>one<\/li>\n<li>two<\/li>\n<\/ul>/)
   assert.match(html, /<strong>bold<\/strong>/)
   assert.doesNotMatch(markdownToHtml('<script>x</script>'), /<script>/)
+})
+
+test('PDF images: a real local picture becomes a figure, anything else stays text', () => {
+  const pic = join(home, 'shot.png')
+  writeFileSync(pic, 'png')
+  const html = markdownToHtml(`![The dashboard](${pic})`)
+  assert.match(html, /<figure><img src="file:\/\/\/[^"]+shot\.png" alt="The dashboard"><figcaption>The dashboard<\/figcaption><\/figure>/)
+  assert.doesNotMatch(markdownToHtml('![x](https://evil.example/a.png)'), /<img/)
+  assert.doesNotMatch(markdownToHtml(`![x](${join(home, 'missing.png')})`), /<img/)
 })
 
 test('customisation tools that rewrite files need write access', () => {

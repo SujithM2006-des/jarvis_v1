@@ -8,12 +8,9 @@ import { useStore } from './store'
 import { startVoice, type Voice, type VoiceMode } from './lib/voice'
 import { createSpeaker, cycleVoice, currentVoiceName, listVoices, setVoiceProfile } from './lib/tts'
 import { analyseVoice } from './lib/voiceprint'
-import CustomLayout, { hide as hiddenParts } from './custom/CustomLayout'
+import CustomLayout from './custom/CustomLayout'
 import { LayoutBoundary } from './custom/LayoutBoundary'
-import type { ComponentType } from 'react'
-
-/** The custom layout, or null for the stock look (its default export is null then). */
-const Layout = CustomLayout as ComponentType | null
+import { lastLayoutError, retryLayout, useHidden } from './custom/kit'
 import * as sfx from './lib/sfx'
 import * as music from './lib/music'
 import * as hands from './lib/hands'
@@ -655,6 +652,52 @@ export default function App() {
       return r as Record<string, unknown>
     })
 
+    // Transcribing a recording (bridge transcribe_audio): the browser decodes
+    // any format to 16 kHz mono 16-bit samples for the offline recogniser.
+    handleRequest('audio-pcm', async (msg) => {
+      const bytes = Uint8Array.from(atob(String(msg.data ?? '')), (c) => c.charCodeAt(0))
+      const ctx = new OfflineAudioContext(1, 16000, 16000)
+      const buf = await ctx.decodeAudioData(bytes.buffer)
+      const n = Math.min(buf.length, 16000 * 600) // ten minutes at most
+      const pcm = new Int16Array(n)
+      for (let c = 0; c < buf.numberOfChannels; c++) {
+        const ch = buf.getChannelData(c)
+        for (let i = 0; i < n; i++) pcm[i] += Math.max(-1, Math.min(1, ch[i] / buf.numberOfChannels)) * 32767
+      }
+      const b = new Uint8Array(pcm.buffer)
+      let bin = ''
+      for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000))
+      return { pcm: btoa(bin), seconds: Math.round(n / 16000), truncated: buf.length > n }
+    })
+
+    // After JARVIS applies a new layout: did it render, and does it run
+    // smoothly? The bridge rolls it back if not (bridge/customize.mjs).
+    handleRequest('layout-check', async () => {
+      retryLayout()
+      await new Promise((r) => setTimeout(r, 1500))
+      // A hidden (minimised) page gets no animation frames at all, so speed
+      // can only be measured while it is on screen; capped at 2 s regardless.
+      const hidden = document.visibilityState === 'hidden'
+      let fps: number | null = null
+      if (!hidden) {
+        let frames = 0
+        const t0 = performance.now()
+        await Promise.race([
+          new Promise<void>((done) => {
+            const tick = () => {
+              frames++
+              if (performance.now() - t0 < 1000) requestAnimationFrame(tick)
+              else done()
+            }
+            requestAnimationFrame(tick)
+          }),
+          new Promise<void>((done) => setTimeout(done, 2000)),
+        ])
+        fps = Math.round((frames * 1000) / (performance.now() - t0))
+      }
+      return { error: null, layoutError: lastLayoutError(), fps, hidden }
+    })
+
     // Reminders and timers: spoken the moment they fall due, unasked. A fresh
     // speaker held in the same slot as any other line, so saying "stop" or
     // starting to talk cuts it off like anything else he says.
@@ -849,7 +892,23 @@ export default function App() {
     url.searchParams.delete('wake')
     url.searchParams.delete('from')
     window.history.replaceState(null, '', url.pathname + url.search + url.hash)
-    if (woken) onWake('')
+    if (woken) {
+      // What was said after "Hey Jarvis" while he was still starting — caught
+      // offline by the wake listener — is answered now, instead of lost.
+      let pending = ''
+      try {
+        const res = await fetch(`${BRIDGE_HTTP_URL}/pending-command`, { cache: 'no-store' })
+        if (res.ok) pending = String((await res.json()).text ?? '').trim()
+      } catch {
+        /* no bridge yet: just listen */
+      }
+      if (pending) {
+        console.warn(`[voice] answering what was said while starting: "${pending}"`)
+        void respond(pending)
+      } else {
+        onWake('')
+      }
+    }
   }
 
   // -- clap to start --------------------------------------------------------
@@ -1040,24 +1099,18 @@ export default function App() {
   }, [])
 
   // A custom layout, written by JARVIS on request from a picture: drawn over
-  // the scene and under the HUD's live parts (panels, blades, transcript),
-  // with the stock parts it replaces hidden by name.
-  useEffect(() => {
-    const root = document.documentElement
-    for (const c of [...root.classList]) if (c.startsWith('cl-hide-')) root.classList.remove(c)
-    if (Layout) for (const part of hiddenParts) root.classList.add(`cl-hide-${part}`)
-  }, [])
+  // the scene and under the HUD's live parts (panels, blades, transcript). It
+  // names the stock parts it replaces (useHide), which are then not rendered.
+  const hiddenNow = useHidden()
 
   return (
     <>
       {/* Not rendered at all when a custom layout replaces it: made invisible
           with CSS, the 3D scene kept drawing every frame on the GPU. */}
-      {!(Layout && (hiddenParts as readonly string[]).includes('scene')) && <Scene />}
-      {Layout && (
-        <LayoutBoundary>
-          <Layout />
-        </LayoutBoundary>
-      )}
+      {!hiddenNow.includes('scene') && <Scene />}
+      <LayoutBoundary>
+        <CustomLayout />
+      </LayoutBoundary>
       <Hud />
       <Boot />
       <Diagnostics />

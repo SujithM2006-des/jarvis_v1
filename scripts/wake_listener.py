@@ -59,6 +59,71 @@ CHUNK = 1280  # 80 ms, the frame size openWakeWord expects
 NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW
 
 
+REMINDERS = HOME / "reminders.json"
+
+# A Windows notification that stays until dismissed (as bridge/assistant.mjs).
+TOAST_PS = r"""
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
+function X($s) { [Security.SecurityElement]::Escape($s) }
+$doc = "<toast scenario='reminder'><visual><binding template='ToastGeneric'><text>$(X $env:JARVIS_T)</text><text>$(X $env:JARVIS_B)</text></binding></visual><actions><action content='Dismiss' arguments='dismiss' activationType='system'/></actions><audio src='ms-winsoundevent:Notification.Reminder'/></toast>"
+$x = New-Object Windows.Data.Xml.Dom.XmlDocument; $x.LoadXml($doc)
+$id = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($id).Show([Windows.UI.Notifications.ToastNotification]::new($x))
+"""
+
+
+def toast(title, body):
+    env = dict(os.environ, JARVIS_T=title, JARVIS_B=body)
+    subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", TOAST_PS],
+        env=env, creationflags=NO_WINDOW, timeout=20, check=False,
+    )
+
+
+def fire_due_reminders():
+    """While JARVIS is off: show due reminders and timers, and move repeating
+    ones to their next time — the same bookkeeping the bridge does. Scheduled
+    WhatsApp messages are left for the bridge, which sends them when it starts
+    (if they are not hours late)."""
+    from datetime import datetime, timedelta, timezone
+
+    try:
+        items = json.loads(REMINDERS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(items, list):
+        return
+    now = datetime.now(timezone.utc)
+    keep, fired = [], 0
+    for r in items:
+        try:
+            at = datetime.fromisoformat(str(r.get("at", "")).replace("Z", "+00:00"))
+            if at.tzinfo is None:
+                at = at.astimezone()
+        except ValueError:
+            keep.append(r)
+            continue
+        if at > now or r.get("kind") == "whatsapp":
+            keep.append(r)
+            continue
+        late = now - at
+        note = f" (due {at.astimezone():%I:%M %p})" if late > timedelta(minutes=5) else ""
+        title = "Jarvis timer" if r.get("kind") == "timer" else "Jarvis reminder"
+        toast(title, f"{r.get('text', '')}{note}")
+        fired += 1
+        step = {"daily": 1, "weekly": 7}.get(r.get("repeat") or "", 0)
+        if step:
+            while at <= now:
+                at += timedelta(days=step)
+            keep.append({**r, "at": at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")})
+    if fired:
+        tmp = REMINDERS.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(keep, indent=2), encoding="utf-8")
+        os.replace(tmp, REMINDERS)
+        log(f"showed {fired} reminder(s) while JARVIS was off")
+
+
 def single_instance():
     """Exit quietly if another listener already holds the lock."""
     import ctypes
@@ -97,6 +162,43 @@ def wake_window():
         return False
 
 
+PENDING = HOME / "pending-command.json"
+
+
+def capture_command(stream, vosk_model, limit=8.0, quiet=1.3):
+    """Right after "Hey Jarvis" with JARVIS off: transcribe what follows (up to
+    `limit` seconds, ending at `quiet` seconds of silence after speech) with
+    Vosk, free-form, and leave it for his window (GET /pending-command)."""
+    from vosk import KaldiRecognizer
+
+    rec = KaldiRecognizer(vosk_model, RATE)
+    start = time.monotonic()
+    heard_at = None
+    parts = []
+    while time.monotonic() - start < limit:
+        if stream.read_available < CHUNK:
+            time.sleep(0.02)
+            continue
+        audio, _ = stream.read(CHUNK)
+        if int(np.abs(audio).max()) > 1500:
+            heard_at = time.monotonic()
+        if rec.AcceptWaveform(audio.tobytes()):
+            parts.append(json.loads(rec.Result()).get("text", ""))
+        if heard_at and time.monotonic() - heard_at > quiet:
+            break
+        if not heard_at and time.monotonic() - start > 3.5:
+            break  # nothing said after his name: he will just listen
+    parts.append(json.loads(rec.FinalResult()).get("text", ""))
+    text = " ".join(p for p in parts if p).strip()
+    # Strip a repeated wake phrase the recogniser may have caught again.
+    for lead in ("hey jarvis", "jarvis"):
+        if text.startswith(lead):
+            text = text[len(lead):].strip()
+    if len(text.split()) >= 2:
+        PENDING.write_text(json.dumps({"text": text, "at": int(time.time() * 1000)}), encoding="utf-8")
+        log(f'caught the command while starting: "{text}"')
+
+
 def start_jarvis():
     # Always through the launcher: it starts the brain only if it is not
     # already up, and opens the window on the loading screen straight away.
@@ -127,14 +229,16 @@ def main():
     # and scores some accents near zero; either detector hearing it is enough.
     # Optional — without the model folder the listener runs on openWakeWord.
     vosk_rec = None
+    vosk_model = None
     vosk_dir = HOME / "vosk" / "vosk-model-small-en-in-0.4"
     if vosk_dir.exists():
         try:
             from vosk import KaldiRecognizer, Model as VoskModel, SetLogLevel
 
             SetLogLevel(-1)
+            vosk_model = VoskModel(str(vosk_dir))
             vosk_rec = KaldiRecognizer(
-                VoskModel(str(vosk_dir)), RATE, json.dumps(["hey jarvis", "jarvis", "[unk]"])
+                vosk_model, RATE, json.dumps(["hey jarvis", "jarvis", "[unk]"])
             )
         except Exception as err:
             log(f"Vosk unavailable, using openWakeWord alone: {err}")
@@ -144,6 +248,7 @@ def main():
     last_fire = 0.0  # last time the phrase was acted on at all
     last_start = -1e9  # last cold start of JARVIS
     last_check = 0.0
+    last_reminders = 0.0
     jarvis_on = False
     last_data = last_sound = time.monotonic()
     stat_at, stat_peak, stat_score = time.monotonic(), 0, 0.0
@@ -183,6 +288,11 @@ def main():
                         if running
                         else 'JARVIS is off - will start him on the phrase'
                     )
+                # With the brain down nobody else is watching the clock:
+                # reminders and timers still pop up as notifications.
+                if not up and now - last_reminders > 30:
+                    last_reminders = now
+                    fire_due_reminders()
 
             if stream is None:
                 stream = sd.InputStream(samplerate=RATE, channels=1, dtype="int16", blocksize=CHUNK)
@@ -264,10 +374,15 @@ def main():
                 last_start = time.monotonic()
                 log(f'heard "Hey Jarvis" ({score:.2f}) - JARVIS is off')
                 start_jarvis()
+                # He takes a while to come up; whatever is said in the
+                # meantime ("Hey Jarvis, what's the weather") is caught here,
+                # offline, and answered the moment he is ready.
+                if vosk_model is not None:
+                    capture_command(stream, vosk_model)
                 stream.stop()
                 stream.close()
                 stream = None
-                time.sleep(20)  # let him come up before listening again
+                time.sleep(12)  # let him come up before listening again
                 last_check = 0.0
         except Exception as err:  # keep running whatever happens
             log(f"error: {err}")
