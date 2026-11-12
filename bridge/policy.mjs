@@ -167,6 +167,9 @@ export function decideTool(name, allowWrites = false) {
     // allowWrites inside the tool itself.
     if (server === 'jarvis_assistant') return true
 
+    // The news: read-only headlines stored on this PC (and a refresh fetch).
+    if (server === 'jarvis_news') return true
+
     // Customising his own look and voice. Restyling writes a stylesheet into
     // the project, so it needs allowWrites; measuring a recording and setting
     // the voice only touch the browser's own settings.

@@ -31,6 +31,7 @@ import { randomBytes } from 'node:crypto'
 import { FEATURES, identityPrompt, readProfile, saveProfile } from './profile.mjs'
 import { OFFLINE_PROMPT, PROVIDERS, brainMode, brainState, brainsInfo, checkBrain, currentBrain, localEnv, markExhausted, maskedKeys, proxyModel, quickAnswer, quickCommand, saveChoice, saveKeys, setProxyCheck, useLocal } from './brain.mjs'
 import { PROXY_URL, proxyIsUp, proxyKey, startProxy } from './litellm.mjs'
+import { newsPrompt, newsServer, startNews } from './news.mjs'
 import { fileURLToPath } from 'node:url'
 
 const SCRIPTS = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'scripts')
@@ -1765,6 +1766,8 @@ publishToken()
 setProxyCheck(proxyIsUp)
 await checkBrain()
 void startProxy()
+// The news: fetched now and every 2 hours, whenever the internet is up.
+startNews(() => brainState().online)
 let activeBrain = currentBrain()
 console.log(`[jarvis] brain: ${activeBrain ?? 'none'}${activeBrain === 'local' ? ` (${brainState().model})` : ''}`)
 let brainNews = null
@@ -1808,7 +1811,7 @@ function withBrain(o) {
   const id = currentBrain()
   if (!id || id === 'claude') return o
   if (id === 'local') {
-    const keep = ['jarvis_pc', 'jarvis_assistant']
+    const keep = ['jarvis_pc', 'jarvis_assistant', 'jarvis_news']
     const local = {
       ...o,
       env: localEnv(),
@@ -2209,6 +2212,8 @@ wss.on('connection', (socket) => {
         // connection: measuring a recording and setting the voice ask the
         // browser, the same way the camera does.
         jarvis_custom: customizeServer({ ask, allowWrites: ALLOW_WRITES }),
+        // Today's news in every sector, refreshed every 2 hours online.
+        jarvis_news: newsServer(),
         ...(DISABLED.has('whatsapp')
           ? {}
           : { jarvis_whatsapp: whatsappServer({ allowWrites: ALLOW_WRITES }) }),
@@ -2221,7 +2226,7 @@ wss.on('connection', (socket) => {
       // And the recent conversation from the journal, so a restart is not amnesia.
       // Who he is, who made him and who he works for come first — read per
       // session, so a profile saved in setup applies from the next one.
-      systemPrompt: identityPrompt() + SYSTEM_PROMPT + memoryPrompt() + journalPrompt(),
+      systemPrompt: identityPrompt() + SYSTEM_PROMPT + memoryPrompt() + journalPrompt() + newsPrompt(),
       // Run from JARVIS's own workspace rather than the home directory. MCP
       // discovery does not depend on it — settingSources is empty and the
       // servers are passed in explicitly above — and file tools resolve

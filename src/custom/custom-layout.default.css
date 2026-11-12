@@ -1595,3 +1595,111 @@ button.vg-avatar.vg-avatar-on { box-shadow: 0 0 0 2px rgba(63, 182, 255, 0.7), 0
 .vg-brain select option:disabled { color: #5c7894; }
 /* Picked model unavailable (limit reached, offline): another is answering. */
 .vg-brain-fb select { border-color: rgba(255, 190, 90, 0.6); }
+/* =====================================================================
+   Responsive: split screen and small windows. Above 1100 px wide nothing
+   here applies — the full-screen layout is exactly as designed.
+   ===================================================================== */
+
+/* Slightly narrower windows: narrower side columns, more room for the centre. */
+@media (max-width: 1360px) {
+  .vg-root { grid-template-columns: 60px minmax(230px, 24vw) minmax(0, 1fr) minmax(230px, 24vw); }
+}
+
+/* Split screen (half of a laptop or desktop screen): one scrolling page.
+   Header; the orb and the conversation at full width; the ask bar pinned to
+   the bottom; then the panels in two columns. The rail stays on the left. */
+@media (max-width: 1100px) {
+  .vg-root {
+    pointer-events: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    grid-template-columns: 58px minmax(0, 1fr) minmax(0, 1fr);
+    /* max-content, not auto: in this fixed, scrolling box the browser sized auto
+       rows by the leftover space and gave the centre 0 px (measured). */
+    grid-template-rows: auto max-content max-content max-content;
+    align-content: start;
+    row-gap: 14px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(63, 182, 255, 0.35) transparent;
+  }
+  .vg-head { grid-row: 1; grid-column: 1 / -1; }
+  .vg-rail {
+    grid-column: 1;
+    grid-row: 2 / span 3;
+    align-self: start;
+    position: sticky;
+    top: 0;
+    max-height: calc(100vh - 40px);
+  }
+  /* Natural height (min-height: auto): the page scrolls instead. The full-screen
+     layout lets these shrink to fit, which here squashed the centre to nothing. */
+  .vg-centre { grid-column: 2 / -1; grid-row: 2; grid-template-rows: auto auto auto; min-height: min-content; }
+  .vg-col, .vg-ask { min-height: min-content; }
+  .vg-reactor { height: min(46vh, 62vw); max-height: none; margin-top: 2vh; margin-bottom: 11%; }
+  .vg-ask {
+    grid-column: 2 / -1;
+    grid-row: 3;
+    position: sticky;
+    bottom: 6px;
+    z-index: 6;
+    min-height: 58px;
+  }
+  .vg-left,
+  .vg-right { grid-row: 4; min-height: auto; overflow: visible; }
+  .vg-left { grid-column: 2; }
+  .vg-right { grid-column: 3; }
+  .vg-col > * { flex: none !important; }
+  .vg-head-mid .vg-hm-line { display: none; }
+}
+
+/* Header: the status chips go first when space runs out, then the date. */
+@media (max-width: 900px) {
+  .vg-head-mid { display: none; }
+}
+@media (max-width: 560px) {
+  .vg-when { display: none; }
+  .vg-brand small { display: none; }
+}
+
+/* Narrow (a quarter of the screen, or a phone-sized window): one column.
+   The rail becomes a row of icons under the header. */
+@media (max-width: 680px) {
+  .vg-root {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto max-content max-content max-content max-content max-content;
+    padding: 12px 12px 10px;
+  }
+  .vg-rail {
+    grid-column: 1;
+    grid-row: 2;
+    position: static;
+    max-height: none;
+    flex-direction: row;
+    justify-content: space-between;
+    padding: 6px 10px;
+    overflow-x: auto;
+  }
+  .vg-rail > button { width: 40px; height: 40px; flex: none; }
+  .vg-rail > button.vg-active::before { display: none; }
+  .vg-rail .vg-tip { display: none; }
+  .vg-me { margin-top: 0; margin-left: auto; }
+  .vg-me-menu { left: auto; right: 0; bottom: auto; top: calc(100% + 10px); }
+  .vg-centre { grid-column: 1; grid-row: 3; }
+  .vg-reactor { height: min(44vh, 82vw); }
+  .vg-ask { grid-column: 1; grid-row: 4; padding-left: 12px; gap: 8px; }
+  .vg-ask .vg-ask-wave { display: none; }
+  .vg-brain select { max-width: 104px; padding-right: 24px; }
+  /* Everything in the ask bar fits: the text box gives way, the buttons shrink a little. */
+  .vg-ask input { min-width: 0; flex: 1 1 0; }
+  .vg-ask > button { width: 40px; height: 40px; flex: none; }
+  .vg-left { grid-column: 1; grid-row: 5; }
+  .vg-right { grid-column: 1; grid-row: 6; }
+}
+
+/* Short windows (a split screen stacked top and bottom): a smaller orb. */
+@media (max-height: 640px) {
+  .vg-reactor { max-height: 46vh; }
+}
+@media (max-height: 640px) and (max-width: 1100px) {
+  .vg-reactor { height: min(60vh, 56vw); }
+}
