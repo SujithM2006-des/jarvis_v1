@@ -90,6 +90,12 @@ $xamlText = @'
     <WindowChrome ResizeBorderThickness="0" CaptionHeight="0" CornerRadius="16" GlassFrameThickness="0" UseAeroCaptionButtons="False"/>
   </WindowChrome.WindowChrome>
   <Grid>
+  <!-- Smallest: a thin line at the top of the screen, like a phone's handle.
+       Click it or pull it down for the notch. The transparent border round it
+       is only there to make it easy to hit. -->
+  <Border x:Name="Line" Visibility="Collapsed" Background="#01000000" Cursor="Hand" ToolTip="JARVIS - click or pull down">
+    <Border x:Name="LineBar" Height="4" CornerRadius="2" VerticalAlignment="Top" Margin="6,3,6,0" Background="#3FB6FF"/>
+  </Border>
   <!-- The tucked-away state: a small tab at the top of the screen. Click to open. -->
   <Border x:Name="Notch" Visibility="Collapsed" CornerRadius="0,0,14,14" BorderThickness="1,0,1,1"
           BorderBrush="#553FB6FF" Background="#F00A1F45" Cursor="Hand" ToolTip="Open JARVIS">
@@ -171,7 +177,7 @@ $xamlText = $xamlText.Replace('J.A.R.V.I.S.', [Security.SecurityElement]::Escape
 
 $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
 $el = @{}
-foreach ($n in 'Header', 'Dot', 'Status', 'Close', 'Scroll', 'Heard', 'Said', 'Circle', 'Mic', 'Mute', 'MuteGlyph', 'MuteSlash', 'Attach', 'AttachRow', 'AttachList', 'AttachClear', 'Input', 'Send', 'Panel', 'Notch', 'NotchDot') { $el[$n] = $win.FindName($n) }
+foreach ($n in 'Header', 'Dot', 'Status', 'Close', 'Scroll', 'Heard', 'Said', 'Circle', 'Mic', 'Mute', 'MuteGlyph', 'MuteSlash', 'Attach', 'AttachRow', 'AttachList', 'AttachClear', 'Input', 'Send', 'Panel', 'Notch', 'NotchDot', 'Line', 'LineBar') { $el[$n] = $win.FindName($n) }
 $brush = { param($hex) (New-Object System.Windows.Media.BrushConverter).ConvertFromString((Turn-Colour $hex)) }
 $micIdle = & $brush '#223FB6FF'
 $micLive = & $brush '#3FB6FF'
@@ -205,17 +211,33 @@ $script:idleSince = Get-Date
 $script:exp = $null
 $script:wasActive = $false
 
+# Tucked away it has two sizes: the line (smallest, hides almost nothing) and
+# the notch. Click the line or pull it down: the notch. Click the notch: the
+# panel. Push the notch up: the line. The panel tucks away to the line.
+$LINE_W = 96
+$LINE_H = 12
+$script:small = 'line'
+
+function Show-Small([string]$kind) {
+  $script:small = $kind
+  $isLine = $kind -eq 'line'
+  $el.Line.Visibility = if ($isLine) { 'Visible' } else { 'Collapsed' }
+  $el.Notch.Visibility = if ($isLine) { 'Collapsed' } else { 'Visible' }
+  $w = if ($isLine) { $LINE_W } else { $NOTCH_W }
+  $h = if ($isLine) { $LINE_H } else { $NOTCH_H }
+  $win.Width = $w; $win.Height = $h
+  $win.Left = $area.Left + ($area.Width - $w) / 2
+  $win.Top = $area.Top
+}
+
 function Collapse-Panel {
   if ($script:collapsed) { return }
   $script:exp = @{ left = $win.Left; top = $win.Top; width = $win.Width; height = $win.Height }
   $script:collapsed = $true
   $el.Panel.Visibility = 'Collapsed'
-  $el.Notch.Visibility = 'Visible'
   $win.ResizeMode = 'NoResize'
   $win.MinWidth = 0; $win.MinHeight = 0; $win.MaxWidth = [double]::PositiveInfinity; $win.MaxHeight = [double]::PositiveInfinity
-  $win.Width = $NOTCH_W; $win.Height = $NOTCH_H
-  $win.Left = $area.Left + ($area.Width - $NOTCH_W) / 2
-  $win.Top = $area.Top
+  Show-Small 'line'
 }
 
 function Expand-Panel {
@@ -223,6 +245,7 @@ function Expand-Panel {
   $script:collapsed = $false
   $script:idleSince = Get-Date
   $el.Notch.Visibility = 'Collapsed'
+  $el.Line.Visibility = 'Collapsed'
   $el.Panel.Visibility = 'Visible'
   $win.MinWidth = 580; $win.MinHeight = 192; $win.MaxWidth = 580; $win.MaxHeight = 192
   $win.Width = 580; $win.Height = 192
@@ -232,7 +255,35 @@ function Expand-Panel {
   [void][JarvisPopup.Keys]::GetAsyncKeyState(0x01); [void][JarvisPopup.Keys]::GetAsyncKeyState(0x02)
 }
 
-$el.Notch.Add_MouseLeftButtonUp({ Expand-Panel })
+# Click versus push/pull: how far the pointer moved between press and
+# release, on the screen (the mouse is captured, so a pull past the tiny
+# window still counts). More than 6 px up or down is a push or a pull.
+$script:pressY = $null
+function Start-Press($target) {
+  $script:pressY = [System.Windows.Forms.Cursor]::Position.Y
+  [void]$target.CaptureMouse()
+}
+function End-Press($target) {
+  $target.ReleaseMouseCapture()
+  if ($null -eq $script:pressY) { return 0 }
+  $dy = [System.Windows.Forms.Cursor]::Position.Y - $script:pressY
+  $script:pressY = $null
+  return $dy
+}
+# The line: a click or a pull down brings the notch.
+$el.Line.Add_MouseLeftButtonDown({ param($s) Start-Press $s })
+$el.Line.Add_MouseLeftButtonUp({
+  param($s)
+  $dy = End-Press $s
+  if ($dy -ge -6) { Show-Small 'notch' }
+})
+# The notch: pushed up, it becomes the line; a click opens the panel.
+$el.Notch.Add_MouseLeftButtonDown({ param($s) Start-Press $s })
+$el.Notch.Add_MouseLeftButtonUp({
+  param($s)
+  $dy = End-Press $s
+  if ($dy -lt -6) { Show-Small 'line' } else { Expand-Panel }
+})
 
 # Where the pointer really is, against the panel's rectangle. WPF's own
 # IsMouseOver stays true on this frameless, transparent window long after the
@@ -522,6 +573,7 @@ $timer.Add_Tick({
       # Tucked away it stays tucked away: only a click on the notch opens it
       # (it used to spring open on every "Hey Jarvis"). The dot shows he is busy.
       $el.NotchDot.Opacity = if ($active) { 1 } else { 0.5 }
+      $el.LineBar.Opacity = if ($active) { 1 } else { 0.55 }
     } else {
       $busyHere = (Test-MouseOver) -or $el.Input.IsKeyboardFocused -or $el.Input.Text -or $script:files.Count -or $script:modal
       if ($env:JARVIS_POPUP_DEBUG -eq '1') {
