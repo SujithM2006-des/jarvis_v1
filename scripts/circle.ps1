@@ -29,10 +29,12 @@ public class CircleForm : Form {
   bool drawing;
   public string Result = "";
 
-  public static string Run() {
+  public static string Run(string title) {
     SetProcessDPIAware();
     // Out of the way first, so the main JARVIS window isn't what gets circled.
-    IntPtr jarvis = FindWindow(null, "J.A.R.V.I.S.");
+    // Titled with the assistant's name (setup can rename him).
+    IntPtr jarvis = FindWindow(null, title);
+    if (jarvis == IntPtr.Zero) jarvis = FindWindow(null, "J.A.R.V.I.S.");
     if (jarvis != IntPtr.Zero) { ShowWindow(jarvis, 6); System.Threading.Thread.Sleep(350); }
     var f = new CircleForm();
     Application.Run(f);
@@ -103,4 +105,10 @@ public class CircleForm : Form {
   }
 }
 '@
-[Console]::Out.Write([CircleForm]::Run())
+# The main window's title: the assistant's name from setup (~/.jarvis/profile.json).
+$title = 'J.A.R.V.I.S.'
+try {
+  $a = ([IO.File]::ReadAllText((Join-Path $env:USERPROFILE '.jarvis\profile.json')) | ConvertFrom-Json).assistant
+  if ($a -and "$a".Trim().ToUpper() -ne 'JARVIS') { $title = "$a".Trim().ToUpper() }
+} catch {}
+[Console]::Out.Write([CircleForm]::Run($title))

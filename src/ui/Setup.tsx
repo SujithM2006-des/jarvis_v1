@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BRIDGE_HTTP_URL } from '../config'
 import { currentRate, currentVoiceName, listVoices, previewVoice, setVoiceProfile } from '../lib/tts'
-import { refreshProfile, useProfile, type Profile } from '../custom/kit'
+import { assistantTitle, refreshProfile, useProfile, type Profile } from '../custom/kit'
 import { ORBS, Orb } from '../custom/orbs'
 import './setup.css'
 
@@ -83,6 +83,9 @@ export function Setup() {
   useEffect(() => {
     if (!profile) return
     applyTheme(profile.theme)
+    // The window's title (title bar, taskbar) is the assistant's name too. The
+    // popup and scripts find this window by it (they read the same profile).
+    document.title = assistantTitle(profile)
     if (!profile.configured) setOpen(true)
   }, [profile])
 

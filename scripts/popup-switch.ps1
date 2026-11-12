@@ -66,7 +66,14 @@ function Stop-Popup {
 # within 3 seconds (measured), but keeps one it restored itself.
 function Restore-Main {
   Add-Type -Namespace JarvisSwitch -Name Win -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern System.IntPtr FindWindow(string c, string t); [DllImport("user32.dll")] public static extern bool PostMessage(System.IntPtr h, uint m, System.IntPtr w, System.IntPtr l);'
-  $h = [JarvisSwitch.Win]::FindWindow([NullString]::Value, 'J.A.R.V.I.S.')
+  # Titled with the assistant's name (setup can rename him); else the default.
+  $title = 'J.A.R.V.I.S.'
+  try {
+    $a = ([IO.File]::ReadAllText((Join-Path $dir 'profile.json')) | ConvertFrom-Json).assistant
+    if ($a -and "$a".Trim().ToUpper() -ne 'JARVIS') { $title = "$a".Trim().ToUpper() }
+  } catch {}
+  $h = [JarvisSwitch.Win]::FindWindow([NullString]::Value, $title)
+  if ($h -eq [IntPtr]::Zero) { $h = [JarvisSwitch.Win]::FindWindow([NullString]::Value, 'J.A.R.V.I.S.') }
   if ($h -ne [IntPtr]::Zero) { [void][JarvisSwitch.Win]::PostMessage($h, 0x112, [IntPtr]0xF120, [IntPtr]::Zero) }  # WM_SYSCOMMAND, SC_RESTORE
 }
 

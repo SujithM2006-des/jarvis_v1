@@ -7,6 +7,7 @@ import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { protectedProblem, ps, resolveUserPath } from './pc.mjs'
+import { windowTitle } from './profile.mjs'
 
 /**
  * Customising JARVIS himself, on request: his look and his voice.
@@ -225,8 +226,14 @@ public static class JShot {
   [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte sc, uint f, UIntPtr e);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   public struct RECT { public int L, T, R, B; }
-  public static string Show() {
-    IntPtr h = FindWindow(null, "J.A.R.V.I.S.");
+  // The window is titled with the assistant's name (setup can rename him); the
+  // loading screen is still "J.A.R.V.I.S.".
+  static IntPtr Find(string title) {
+    IntPtr h = string.IsNullOrEmpty(title) ? IntPtr.Zero : FindWindow(null, title);
+    return h != IntPtr.Zero ? h : FindWindow(null, "J.A.R.V.I.S.");
+  }
+  public static string Show(string title) {
+    IntPtr h = Find(title);
     if (h == IntPtr.Zero) return "";
     // Restore only if minimised: SW_RESTORE on a maximised window un-maximises it.
     ShowWindow(h, IsIconic(h) ? 9 : 5);
@@ -234,8 +241,8 @@ public static class JShot {
     SetForegroundWindow(h);
     return "ok";
   }
-  public static bool Shot(string path) {
-    IntPtr h = FindWindow(null, "J.A.R.V.I.S.");
+  public static bool Shot(string path, string title) {
+    IntPtr h = Find(title);
     RECT r; GetWindowRect(h, out r);
     using (var bmp = new Bitmap(Math.Max(1, r.R - r.L), Math.Max(1, r.B - r.T))) {
       // PrintWindow draws only this window — never whatever else is on screen.
@@ -262,9 +269,9 @@ export async function showAndShoot(waitMs = 1800) {
   const file = join(tmpdir(), `jarvis-ui-${Date.now()}.jpg`)
   const shown = await ps(
     'Add-Type -TypeDefinition $env:JARVIS_CS -ReferencedAssemblies System.Drawing; [void][JShot]::SetProcessDPIAware(); ' +
-      '$s = [JShot]::Show(); if (-not $s) { "missing"; return }; Start-Sleep -Milliseconds $env:JARVIS_WAIT; ' +
-      'if ([JShot]::Shot($env:JARVIS_F)) { "ok" } else { "blank" }',
-    { CS: SHOT_CS, F: file, WAIT: waitMs },
+      '$s = [JShot]::Show($env:JARVIS_T); if (-not $s) { "missing"; return }; Start-Sleep -Milliseconds $env:JARVIS_WAIT; ' +
+      'if ([JShot]::Shot($env:JARVIS_F, $env:JARVIS_T)) { "ok" } else { "blank" }',
+    { CS: SHOT_CS, F: file, WAIT: waitMs, T: windowTitle() },
     30_000,
   )
   if (shown.trim() !== 'ok') return null

@@ -52,6 +52,14 @@ function Get-Theme {
 }
 $script:theme = Get-Theme
 $script:hue = $themeHues[$script:theme]
+# And the assistant's name (setup can rename him): in the header, the
+# messages, and the main window's title, which is how this finds that window.
+function Get-Assistant {
+  try { $a = ([IO.File]::ReadAllText($profileFile) | ConvertFrom-Json).assistant } catch { $a = $null }
+  if ($a -and "$a".Trim()) { "$a".Trim() } else { 'JARVIS' }
+}
+$script:assistant = Get-Assistant
+$script:title = if ($script:assistant.ToUpper() -eq 'JARVIS') { 'J.A.R.V.I.S.' } else { $script:assistant.ToUpper() }
 function Turn-Colour([string]$hex) {
   if ($script:hue -eq 0 -or $hex -ieq '#E0465A') { return $hex }
   $h = $hex.TrimStart('#')
@@ -153,6 +161,7 @@ $xamlText = @'
   </Grid>
 </Window>
 '@
+$xamlText = $xamlText.Replace('J.A.R.V.I.S.', [Security.SecurityElement]::Escape($script:title)).Replace('JARVIS', [Security.SecurityElement]::Escape($script:assistant))
 [xml]$xaml = [regex]::Replace($xamlText, '#(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{6})\b', { param($m) Turn-Colour $m.Value })
 
 $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
@@ -435,8 +444,8 @@ function Send-Input {
     Start-Jarvis $text
     if ($text) { $script:lastSent = $text }
     $el.Input.Text = ''
-    $el.Status.Text = '  ·  starting JARVIS…'
-  } else { $el.Status.Text = '  ·  JARVIS is not running' }
+    $el.Status.Text = "  ·  starting $($script:assistant)…"
+  } else { $el.Status.Text = "  ·  $($script:assistant) is not running" }
 }
 $el.Send.Add_Click({ Send-Input })
 $el.Input.Add_KeyDown({ if ($_.Key -eq 'Return') { Send-Input } })
@@ -447,12 +456,12 @@ $el.Circle.Add_Click({ Post '/circle' $null | Out-Null })
 $muteOn = & $brush '#E0465A'
 $muteFg = & $brush '#02132B'
 $el.Mute.Add_Click({
-  if (-not (Post '/popup/mute' $null)) { $el.Status.Text = '  ·  JARVIS is not running' }
+  if (-not (Post '/popup/mute' $null)) { $el.Status.Text = "  ·  $($script:assistant) is not running" }
 })
 $el.Mic.Add_Click({
   if (Post '/popup/mic' $null) { return }
-  if (PopupMode) { Start-Jarvis ''; $el.Status.Text = '  ·  starting JARVIS…' }
-  else { $el.Status.Text = '  ·  JARVIS is not running' }
+  if (PopupMode) { Start-Jarvis ''; $el.Status.Text = "  ·  starting $($script:assistant)…" }
+  else { $el.Status.Text = "  ·  $($script:assistant) is not running" }
 })
 
 $labels = @{ dormant = 'standby'; waking = 'listening'; listening = 'listening'; thinking = 'thinking';
@@ -470,7 +479,7 @@ $timer.Add_Tick({
   $script:themeTick = ($script:themeTick + 1) % 8
   # Alive: the bridge reopens the popup when this goes stale (popup mode).
   if ($script:themeTick -eq 0) { try { [IO.File]::WriteAllText($aliveFile, [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) } catch {} }
-  if ($script:themeTick -eq 0 -and (Get-Theme) -ne $script:theme) {
+  if ($script:themeTick -eq 0 -and ((Get-Theme) -ne $script:theme -or (Get-Assistant) -ne $script:assistant)) {
     $timer.Stop()
     try {
       $g = if ($script:collapsed -and $script:exp) { $script:exp } else { @{ left = $win.Left; top = $win.Top; width = $win.Width; height = $win.Height } }
@@ -527,7 +536,7 @@ $timer.Add_Tick({
       $el.Scroll.ScrollToEnd()
     }
   } catch {
-    $el.Status.Text = if (Starting) { '  ·  starting JARVIS…' } else { '  ·  JARVIS is not running' }
+    $el.Status.Text = if (Starting) { "  ·  starting $($script:assistant)…" } else { "  ·  $($script:assistant) is not running" }
     $el.Dot.Opacity = 0.25
   }
 })
@@ -539,7 +548,8 @@ $clickTimer.Start()
 # The popup takes over from the main window: tuck that away so it's out of
 # sight while still running (and listening) in the background.
 # Not before the first-run setup is done: that screen is in the main window.
-$main = [JarvisPopup.Keys]::FindWindow([NullString]::Value, 'J.A.R.V.I.S.')
+$main = [JarvisPopup.Keys]::FindWindow([NullString]::Value, $script:title)
+if ($main -eq [IntPtr]::Zero) { $main = [JarvisPopup.Keys]::FindWindow([NullString]::Value, 'J.A.R.V.I.S.') }
 $setUp = Test-Path (Join-Path $env:USERPROFILE '.jarvis\profile.json')
 if ($setUp -and $main -ne [IntPtr]::Zero) { [void][JarvisPopup.Keys]::ShowWindow($main, 6) }
 

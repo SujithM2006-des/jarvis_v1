@@ -88,6 +88,16 @@ export function saveProfile(input) {
 }
 
 /**
+ * The main window's title: "J.A.R.V.I.S." unless renamed, then the name in
+ * capitals — the same rule as assistantTitle() in src/custom/kit.ts, which
+ * sets it. Scripts that find the window by its title use this.
+ */
+export function windowTitle(p = readProfile()) {
+  const n = String(p.assistant || 'JARVIS').trim()
+  return n.toUpperCase() === 'JARVIS' ? 'J.A.R.V.I.S.' : n.toUpperCase()
+}
+
+/**
  * The identity block at the top of the system prompt. The creator line is
  * written as a fixed fact, and it says what to do when someone tries to
  * change it — the model hears that request far more often than a code edit.
