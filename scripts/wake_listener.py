@@ -184,28 +184,115 @@ def wake_window():
 PENDING = HOME / "pending-command.json"
 
 
-def capture_command(stream, vosk_model, limit=8.0, quiet=1.3):
+def brain_mode():
+    """The bridge's brain: "cloud", "local" (offline, on Ollama) or "none"; None if down."""
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8787/health", timeout=1) as r:
+            return json.load(r).get("brain")
+    except Exception:
+        return None
+
+
+def ask_bridge(text):
+    """Hand a request straight to JARVIS, as if typed in the popup."""
+    try:
+        try:
+            token = (HOME / "bridge-token").read_text().strip()
+        except OSError:
+            token = ""
+        req = urllib.request.Request(
+            "http://127.0.0.1:8787/popup/ask", data=json.dumps({"text": text}).encode("utf-8"),
+            method="POST", headers={"x-jarvis-token": token, "content-type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return int(json.load(r).get("sent", 0)) > 0
+    except Exception:
+        return False
+
+
+LISTEN_NOW = HOME / "listen-now"
+CAPTURE = {"loudest": 0}  # how loud the last capture got, for the log
+OFFLINE = {"on": False}  # the bridge is on the local model (checked every 3 s)
+
+# The big Indian English model (about 1 GB): far more accurate for commands
+# than the small one, but too heavy to keep listening with all the time. The
+# small model keeps listening for "Hey Jarvis"; this one only transcribes the
+# command, offline. Loaded in the background the first time JARVIS goes
+# offline (takes a while), so nothing is ever waiting on it.
+BIG_DIR = HOME / "vosk" / "vosk-model-en-in-0.5"
+BIG = {"model": None, "loading": False}
+
+
+def load_big_model():
+    import threading
+
+    def work():
+        try:
+            from vosk import Model as VoskModel
+
+            t0 = time.monotonic()
+            BIG["model"] = VoskModel(str(BIG_DIR))
+            log(f"big speech model ready for offline commands ({time.monotonic() - t0:.0f}s to load)")
+        except Exception as err:
+            log(f"big speech model unavailable, using the small one: {err}")
+        finally:
+            BIG["loading"] = False
+
+    BIG["loading"] = True
+    log("offline: loading the big speech model in the background")
+    threading.Thread(target=work, daemon=True).start()
+
+
+def offline_capture(stream, vosk_model, why):
+    """Offline: beep (the cue to speak), hear the command with Vosk, and hand
+    it to JARVIS. For "Hey Jarvis" and for the mic button alike. Uses the big
+    model when it is loaded, the small one until then."""
+    try:
+        import winsound
+        winsound.Beep(880, 120)
+    except Exception:
+        pass
+    said = capture_command(stream, BIG["model"] or vosk_model, limit=12.0, quiet=1.5, save=False)
+    if said:
+        ok = ask_bridge(said)
+        log(f'offline command ({why}): "{said}"' + ("" if ok else " (could not reach JARVIS)"))
+    else:
+        log(f"offline ({why}): nothing heard (loudest {CAPTURE['loudest']})")
+
+
+def capture_command(stream, vosk_model, limit=8.0, quiet=1.3, save=True):
     """Right after "Hey Jarvis" with JARVIS off: transcribe what follows (up to
     `limit` seconds, ending at `quiet` seconds of silence after speech) with
-    Vosk, free-form, and leave it for his window (GET /pending-command)."""
+    Vosk, free-form, and leave it for his window (GET /pending-command).
+    With save=False it is only returned — offline, the window's own
+    recogniser (Chrome's, which needs the internet) cannot hear."""
     from vosk import KaldiRecognizer
 
     rec = KaldiRecognizer(vosk_model, RATE)
     start = time.monotonic()
     heard_at = None
     parts = []
+    # The tail of "Hey Jarvis" itself is still in the buffer when this starts.
+    # Counting it as the command beginning ended the capture during the
+    # natural pause before the command ("nothing heard", measured offline).
+    settle = 0.7
+    CAPTURE["loudest"] = 0
     while time.monotonic() - start < limit:
         if stream.read_available < CHUNK:
             time.sleep(0.02)
             continue
         audio, _ = stream.read(CHUNK)
-        if int(np.abs(audio).max()) > 1500:
+        if time.monotonic() - start < settle:
+            continue  # the wake phrase's own tail: not part of the command
+        peak = int(np.abs(audio).max())
+        CAPTURE["loudest"] = max(CAPTURE["loudest"], peak)
+        if peak > 1500:
             heard_at = time.monotonic()
         if rec.AcceptWaveform(audio.tobytes()):
             parts.append(json.loads(rec.Result()).get("text", ""))
         if heard_at and time.monotonic() - heard_at > quiet:
             break
-        if not heard_at and time.monotonic() - start > 3.5:
+        if not heard_at and time.monotonic() - start > (5.5 if not save else 3.5):
             break  # nothing said after his name: he will just listen
     parts.append(json.loads(rec.FinalResult()).get("text", ""))
     text = " ".join(p for p in parts if p).strip()
@@ -213,9 +300,12 @@ def capture_command(stream, vosk_model, limit=8.0, quiet=1.3):
     for lead in ("hey jarvis", "jarvis"):
         if text.startswith(lead):
             text = text[len(lead):].strip()
+    if not save:
+        return text
     if len(text.split()) >= 2:
         PENDING.write_text(json.dumps({"text": text, "at": int(time.time() * 1000)}), encoding="utf-8")
         log(f'caught the command while starting: "{text}"')
+    return text
 
 
 def start_jarvis():
@@ -257,7 +347,7 @@ def main():
             SetLogLevel(-1)
             vosk_model = VoskModel(str(vosk_dir))
             vosk_rec = KaldiRecognizer(
-                vosk_model, RATE, json.dumps(["hey jarvis", "jarvis", "[unk]"])
+                vosk_model, RATE, json.dumps(["hey jarvis", "hi jarvis", "ok jarvis", "okay jarvis", "jarvis", "[unk]"])
             )
         except Exception as err:
             log(f"Vosk unavailable, using openWakeWord alone: {err}")
@@ -314,6 +404,14 @@ def main():
                 last_check = now
                 up, clients = bridge()
                 running = up and clients > 0
+                # Offline (the bridge on the local model): remember it, for
+                # the forgiving wake check, and get the big speech model ready.
+                was_offline = OFFLINE["on"]
+                OFFLINE["on"] = bool(up) and brain_mode() == "local"
+                if OFFLINE["on"] != was_offline:
+                    log("offline mode: listening for the phrase more readily" if OFFLINE["on"] else "back online")
+                if OFFLINE["on"] and BIG_DIR.exists() and BIG["model"] is None and not BIG["loading"]:
+                    load_big_model()
                 if running != jarvis_on:
                     jarvis_on = running
                     log(
@@ -332,6 +430,21 @@ def main():
                 stream.start()
                 model.reset()
                 last_data = last_sound = time.monotonic()
+
+            # The mic button, offline: Chrome's recogniser cannot hear without
+            # the internet, so the bridge asks for the command to be heard
+            # here instead (a fresh ~/.jarvis/listen-now).
+            if LISTEN_NOW.exists():
+                try:
+                    fresh = time.time() - LISTEN_NOW.stat().st_mtime < 10
+                    LISTEN_NOW.unlink()
+                except OSError:
+                    fresh = False
+                if fresh and vosk_model is not None:
+                    offline_capture(stream, vosk_model, "mic button")
+                    model.reset()
+                last_data = last_sound = time.monotonic()
+                continue
 
             # Never block on the microphone: a device that stops delivering
             # audio (Chrome letting go of it, a driver hiccup) would otherwise
@@ -374,13 +487,21 @@ def main():
             # is open or not: it is the detector that copes with an Indian
             # accent, and the page ignores a wake while it is already listening,
             # so a stray one cannot chop a sentence.
+            #
+            # Offline this listener is the only way in (Chrome's recogniser,
+            # which also listens for the phrase online, needs the internet),
+            # so it is more forgiving there: a lower threshold, and a lone
+            # "jarvis" counts. A false wake offline costs only a beep.
+            offline = OFFLINE["on"]
+            threshold = min(args.threshold, 0.08) if offline else args.threshold
             vosk_heard = False
             if vosk_rec is not None:
                 if vosk_rec.AcceptWaveform(audio.tobytes()):
-                    vosk_heard = "hey jarvis" in json.loads(vosk_rec.Result()).get("text", "")
-            if score < args.threshold and not vosk_heard:
+                    got = json.loads(vosk_rec.Result()).get("text", "")
+                    vosk_heard = ("jarvis" in got) if offline else ("hey jarvis" in got)
+            if score < threshold and not vosk_heard:
                 continue
-            if vosk_heard and score < args.threshold:
+            if vosk_heard and score < threshold:
                 score = 1.0  # for the log: it was Vosk that caught it
                 log('Vosk caught "Hey Jarvis"')
 
@@ -395,6 +516,15 @@ def main():
             # Running: wake the window on the spot, like "Hey Google". Tried
             # whenever the bridge might be up, not only when the last check
             # said so — that check is up to three seconds old.
+            # Offline (the bridge runs on the local model): Chrome's recogniser
+            # needs the internet, so hear the command here, with Vosk, and
+            # hand it over as a typed request.
+            if vosk_model is not None and brain_mode() == "local":
+                log(f'heard "Hey Jarvis" ({score:.2f}) - offline, listening here')
+                offline_capture(stream, vosk_model, "wake phrase")
+                model.reset()
+                last_data = last_sound = time.monotonic()
+                continue
             if jarvis_on or bridge()[0]:
                 if wake_window():
                     log(f'heard "Hey Jarvis" ({score:.2f}) - woke the window')

@@ -1,6 +1,7 @@
 import type { AskHandlers } from './anthropic'
 import type { Blade, Panel } from '../store'
 import { BRIDGE_WS_URL } from '../config'
+import { setOfflineVoice } from './tts'
 
 /**
  * Client for the local bridge (see bridge/server.mjs).
@@ -250,6 +251,9 @@ function dispatch(ws: WebSocket) {
         .map((s) => (typeof s === 'string' ? s : (s.name ?? '')))
         .filter(Boolean)
       onServers?.(servers)
+      // Offline brain: speak with a voice installed on the PC.
+      const brain = (msg as unknown as { brain?: string }).brain
+      if (brain) setOfflineVoice(brain !== 'cloud')
       firstReady.resolve()
     } else if (msg.type === 'panel' && msg.panel) {
       onPanel?.(msg.panel)

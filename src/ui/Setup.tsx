@@ -75,6 +75,10 @@ export function Setup() {
   const [form, setForm] = useState<Profile | null>(null)
   const [voice, setVoice] = useState('')
   const [rate, setRate] = useState(1)
+  // AI provider keys: what is saved (masked, "••••1234") and what was typed
+  // here (a new key, or null to remove one). Never shown in full.
+  const [savedKeys, setSavedKeys] = useState<Record<string, string>>({})
+  const [keyInput, setKeyInput] = useState<Record<string, string | null>>({})
   const [voices, setVoices] = useState<{ name: string; lang: string }[]>([])
   const [error, setError] = useState('')
   const [saving, setSaving] = useState('')
@@ -101,6 +105,11 @@ export function Setup() {
       setForm({ ...profile, features: { ...profile.features } })
       setVoice('')
       setRate(Math.round(currentRate() * 20) / 20)
+      setKeyInput({})
+      fetch(`${BRIDGE_HTTP_URL}/keys`, { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : {}))
+        .then((k) => setSavedKeys(k ?? {}))
+        .catch(() => {})
       setError('')
       setSaving('')
     }
@@ -142,6 +151,16 @@ export function Setup() {
         return setError(String(body.error ?? 'Could not save.'))
       }
       if (!skip) setVoiceProfile({ voice: voice || null, rate })
+      // Keys typed here (or removed): saved on this PC only.
+      const typed = Object.fromEntries(Object.entries(keyInput).filter(([, v]) => v === null || (v ?? '').trim()))
+      if (!skip && Object.keys(typed).length) {
+        setSaving('Saving the AI keys and starting the translator…')
+        await fetch(`${BRIDGE_HTTP_URL}/keys`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(typed),
+        }).catch(() => {})
+      }
       applyTheme(body.theme)
       refreshProfile()
       if (body.restarting) {
@@ -280,6 +299,41 @@ export function Setup() {
                   {t.label}
                 </button>
               ))}
+            </div>
+          </div>
+
+          <div className="su-field">
+            <span>AI models — optional keys</span>
+            <small>
+              Claude works with your Claude login. Add a free key to also use Gemini, Groq or OpenRouter — pick one in
+              the dropdown beside the text box, or leave it on Auto to switch when a limit is reached. Keys stay on this PC.
+            </small>
+            <div className="su-keys">
+              {[
+                { id: 'gemini', label: 'Gemini', where: 'aistudio.google.com/apikey' },
+                { id: 'groq', label: 'Groq', where: 'console.groq.com/keys' },
+                { id: 'openrouter', label: 'OpenRouter', where: 'openrouter.ai/keys' },
+              ].map((p) => {
+                const removing = keyInput[p.id] === null
+                return (
+                  <label key={p.id} className="su-key">
+                    <b>{p.label}</b>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={removing ? '' : (keyInput[p.id] ?? '')}
+                      placeholder={removing ? 'will be removed' : savedKeys[p.id] ? `saved ${savedKeys[p.id]}` : `key from ${p.where}`}
+                      onChange={(e) => setKeyInput({ ...keyInput, [p.id]: e.target.value })}
+                    />
+                    {savedKeys[p.id] && !removing && (
+                      <button type="button" className="su-ghost su-key-x" onClick={() => setKeyInput({ ...keyInput, [p.id]: null })}>
+                        Remove
+                      </button>
+                    )}
+                  </label>
+                )
+              })}
             </div>
           </div>
 

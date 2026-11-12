@@ -4,6 +4,11 @@
 # request in the box, or hit "Circle to search". The X closes this panel only —
 # JARVIS keeps running. Opened by saying "turn on onscreen jarvis" (the bridge
 # starts this script), closed by the X or "turn off onscreen jarvis".
+#
+# -Open: start opened out (asked for by the user). Without it — started by
+# itself at sign-in, after a restart — it starts tucked into the notch, and
+# only a click on the notch opens it.
+param([switch]$Open)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
@@ -472,10 +477,18 @@ $timer = New-Object System.Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromMilliseconds(250)
 $script:themeTick = 0
 $aliveFile = Join-Path $env:USERPROFILE '.jarvis\popup-alive'
+$openFile = Join-Path $env:USERPROFILE '.jarvis\popup-open'
+# A request to open that this popup was started with has done its job.
+Remove-Item $openFile -Force -ErrorAction SilentlyContinue
 $timer.Add_Tick({
   # A new colour chosen in the interface: every couple of seconds, look; if it
   # changed, open a fresh popup in that colour, in the same place, and close
   # this one. (The colours are baked in when the panel is built.)
+  # Asked to open (the Assistant button while this is only the notch).
+  if (Test-Path $openFile) {
+    Remove-Item $openFile -Force -ErrorAction SilentlyContinue
+    Expand-Panel
+  }
   $script:themeTick = ($script:themeTick + 1) % 8
   # Alive: the bridge reopens the popup when this goes stale (popup mode).
   if ($script:themeTick -eq 0) { try { [IO.File]::WriteAllText($aliveFile, [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) } catch {} }
@@ -486,7 +499,10 @@ $timer.Add_Tick({
       $g | ConvertTo-Json -Compress | Set-Content -Path $saved -Encoding ascii
     } catch {}
     try { $script:single.ReleaseMutex() } catch {}
-    Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$PSCommandPath`"" -WindowStyle Hidden
+    # Opened out again only if it was open.
+    $again = @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$PSCommandPath`"")
+    if (-not $script:collapsed) { $again += '-Open' }
+    Start-Process -FilePath powershell.exe -ArgumentList $again -WindowStyle Hidden
     $win.Close()
     return
   }
@@ -503,8 +519,9 @@ $timer.Add_Tick({
     $rising = $active -and -not $script:wasActive
     $script:wasActive = $active
     if ($script:collapsed) {
+      # Tucked away it stays tucked away: only a click on the notch opens it
+      # (it used to spring open on every "Hey Jarvis"). The dot shows he is busy.
       $el.NotchDot.Opacity = if ($active) { 1 } else { 0.5 }
-      if ($rising) { Expand-Panel }
     } else {
       $busyHere = (Test-MouseOver) -or $el.Input.IsKeyboardFocused -or $el.Input.Text -or $script:files.Count -or $script:modal
       if ($env:JARVIS_POPUP_DEBUG -eq '1') {
@@ -552,5 +569,8 @@ $main = [JarvisPopup.Keys]::FindWindow([NullString]::Value, $script:title)
 if ($main -eq [IntPtr]::Zero) { $main = [JarvisPopup.Keys]::FindWindow([NullString]::Value, 'J.A.R.V.I.S.') }
 $setUp = Test-Path (Join-Path $env:USERPROFILE '.jarvis\profile.json')
 if ($setUp -and $main -ne [IntPtr]::Zero) { [void][JarvisPopup.Keys]::ShowWindow($main, 6) }
+
+# Started by itself: just the notch, until it is clicked.
+if (-not $Open) { Collapse-Panel }
 
 [void]$win.ShowDialog()

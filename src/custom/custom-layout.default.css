@@ -1572,3 +1572,26 @@ button.vg-avatar.vg-avatar-on { box-shadow: 0 0 0 2px rgba(63, 182, 255, 0.7), 0
 .vg-orb-below .vg-r-text { inset: auto 0 -3% 0; }
 .vg-orb-below .vg-r-text h1 { font-size: clamp(18px, 3.2vh, 32px); }
 .vg-orb-below .vg-r-text p { margin: 0.5vh 0 0.8vh; }
+/* ---- model dropdown, left of the text box */
+.vg-brain { position: relative; flex: none; display: inline-flex; align-items: center; }
+.vg-brain select {
+  appearance: none;
+  height: 36px;
+  max-width: 190px;
+  padding: 0 28px 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(63, 182, 255, 0.35);
+  background: rgba(4, 18, 40, 0.85) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237fc4ff' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center;
+  color: #cfe6fb;
+  font: 600 12.5px/1 'Rajdhani', 'Segoe UI', system-ui, sans-serif;
+  letter-spacing: 0.03em;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  outline: none;
+}
+.vg-brain select:hover,
+.vg-brain select:focus { border-color: #3fb6ff; box-shadow: 0 0 0 3px rgba(63, 182, 255, 0.15); }
+.vg-brain select option { background: #06162e; color: #dcefff; }
+.vg-brain select option:disabled { color: #5c7894; }
+/* Picked model unavailable (limit reached, offline): another is answering. */
+.vg-brain-fb select { border-color: rgba(255, 190, 90, 0.6); }

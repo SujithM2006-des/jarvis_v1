@@ -20,6 +20,8 @@ import {
   type StockPart,
   assistantTitle,
   openSetup,
+  setBrain,
+  useBrains,
   useProfile,
 } from './kit'
 import { Orb, orbInfo } from './orbs'
@@ -558,6 +560,25 @@ function Conversation({ idle }: { idle: boolean }) {
   )
 }
 
+/** The model dropdown, left of the text box: Auto, or one AI to think with. */
+function BrainPick() {
+  const b = useBrains()
+  if (!b) return null
+  const fellBack = b.choice !== 'auto' && b.active && b.active !== b.choice
+  return (
+    <label className={`vg-brain ${fellBack ? 'vg-brain-fb' : ''}`} title={`Answering now: ${b.activeLabel}`}>
+      <select value={b.choice} onChange={(e) => void setBrain(e.target.value)} aria-label="AI model">
+        <option value="auto">Auto · {b.activeLabel}</option>
+        {b.options.map((o) => (
+          <option key={o.id} value={o.id} disabled={Boolean(o.unavailable) && o.unavailable !== 'starting'}>
+            {o.label}
+            {o.unavailable ? ` — ${o.unavailable}` : ''}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
 function AskBar() {
   const { phase, level, caption, error } = useJarvis()
   const muted = useMuted()
@@ -571,6 +592,7 @@ function AskBar() {
   return (
     <div className={`vg-ask ${listening ? 'vg-live' : ''}`}>
       {error && <div className="vg-ask-error" role="alert">{error}</div>}
+      <BrainPick />
       <Wave level={listening ? level : 0} bars={7} idle={listening ? 0.45 : 0.3} className="vg-ask-wave" />
       <input
         value={text}

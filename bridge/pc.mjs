@@ -419,6 +419,20 @@ export const PC_WRITE_TOOLS = new Set(['file_operation', 'zip_files', 'run_power
  *   Tools that change files or run arbitrary commands are only built when
  *   writes are enabled; the rest (opening, finding, clipboard) always are.
  */
+/**
+ * The tools of the last PC server built, by name — for the offline fast path
+ * (bridge/brain.mjs quickCommand), which runs "open notepad", "zip X" and the
+ * like straight away instead of waiting tens of seconds on a local model.
+ * Same tools, same checks; write tools are only here when writes are enabled.
+ */
+let lastTools = []
+export async function runPcTool(name, args) {
+  const t = lastTools.find((x) => x.name === name)
+  if (!t) return null
+  const r = await t.handler(args, {})
+  return { text: (r?.content ?? []).map((c) => c.text ?? '').join(' ').trim(), failed: Boolean(r?.isError) }
+}
+
 export function pcServer({ allowWrites }) {
   const safe = [
     tool(
@@ -915,10 +929,10 @@ $rows | Sort-Object mb -Descending | ForEach-Object {
       (IS_WINDOWS ? '' : ' This machine is not Windows, so most of these tools will fail.'),
     // Always loaded: "open chrome" must never go hunting through tool search.
     alwaysLoad: true,
-    tools: (() => {
+    tools: (lastTools = (() => {
       const desk = desktopTools({ allowWrites, ps })
       const docs = documentTools({ ps, resolveUserPath, protectedProblem, ok, fail })
       return [...safe, ...desk.safe, ...(allowWrites ? [...writes, ...desk.writes, ...docs] : [])]
-    })(),
+    })()),
   })
 }

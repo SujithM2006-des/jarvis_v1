@@ -314,10 +314,35 @@ export function candidateVoices(): SpeechSynthesisVoice[] {
 
 let cachedVoice: SpeechSynthesisVoice | null | undefined
 
+/**
+ * Offline (the bridge is on the local model, or the browser has no network):
+ * Chrome's "Google …" voices are generated online and would go silent, so a
+ * voice installed on the PC (Microsoft David, Zira, …) is used until the
+ * internet is back. The chosen voice returns by itself.
+ */
+let offlineVoice = false
+export function setOfflineVoice(on: boolean) {
+  if (on === offlineVoice) return
+  offlineVoice = on
+  cachedVoice = undefined
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('offline', () => setOfflineVoice(true))
+  window.addEventListener('online', () => setOfflineVoice(false))
+}
+
 function pickVoice(): SpeechSynthesisVoice | null {
   if (cachedVoice !== undefined) return cachedVoice
   const all = speechSynthesis.getVoices()
   if (!all.length) return null // not loaded yet — try again next utterance
+
+  if (offlineVoice || navigator.onLine === false) {
+    const local = all.filter((v) => v.localService && /^en/i.test(v.lang))
+    const mine = profile()?.voice
+    const keep = local.find((v) => v.name === mine)
+    // Not cached: the online voice comes back as soon as the network does.
+    return keep ?? local.find((v) => /david|mark|george|ravi/i.test(v.name)) ?? local[0] ?? null
+  }
 
   // The user's own choice, made by asking him to change his voice.
   const mine = profile()?.voice

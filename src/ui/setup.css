@@ -222,3 +222,21 @@ html[data-theme-hue] #root .vg-pill-muted,
 html[data-theme-hue] #root .vg-sc-btn.vg-bad,
 html[data-theme-hue] #root .vg-mute-on,
 html[data-theme-hue] #root .vg-cal-error { filter: hue-rotate(calc(-1 * var(--theme-hue))); }
+/* AI provider keys */
+.su-keys { display: grid; gap: 8px; }
+.su-key { display: grid; grid-template-columns: 96px 1fr auto; align-items: center; gap: 10px; }
+.su-key b { font-weight: 600; color: #dcefff; }
+.su-key input {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(63, 182, 255, 0.28);
+  background: rgba(2, 14, 32, 0.8);
+  color: #e6f4ff;
+  font: 14px 'JetBrains Mono', ui-monospace, monospace;
+  outline: none;
+  min-width: 0;
+}
+.su-key input:focus { border-color: #3fb6ff; box-shadow: 0 0 0 3px rgba(63, 182, 255, 0.18); }
+.su-key .su-key-x { height: 32px; padding: 0 12px; font-size: 13px; }
+@media (max-width: 560px) { .su-key { grid-template-columns: 1fr; } }

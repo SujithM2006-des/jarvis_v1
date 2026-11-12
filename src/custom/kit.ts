@@ -214,6 +214,56 @@ export function useProfile(): Profile | null {
   return p
 }
 
+/** The AI models JARVIS can think with, for the model dropdown. */
+export type Brains = {
+  /** "auto" or a provider id, as picked in the dropdown. */
+  choice: string
+  /** The provider answering now (Auto's pick, or the fallback after a limit). */
+  active: string | null
+  activeLabel: string
+  options: { id: string; label: string; unavailable: string }[]
+}
+
+const brainSubs = new Set<() => void>()
+
+/** The model dropdown's state, refreshed every 5 s and at once after a change. */
+export function useBrains(): Brains | null {
+  const [b, set] = useState<Brains | null>(null)
+  const [bump, setBump] = useState(0)
+  useEffect(() => {
+    const f = () => setBump((x) => x + 1)
+    brainSubs.add(f)
+    return () => {
+      brainSubs.delete(f)
+    }
+  }, [])
+  useEffect(() => {
+    let alive = true
+    const pull = async () => {
+      try {
+        const res = await fetch(`${BRIDGE_HTTP_URL}/brains`, { cache: 'no-store' })
+        if (res.ok && alive) set(await res.json())
+      } catch {
+        /* bridge down: keep the last reading */
+      }
+    }
+    void pull()
+    const id = window.setInterval(pull, 5000)
+    return () => {
+      alive = false
+      window.clearInterval(id)
+    }
+  }, [bump])
+  return b
+}
+
+/** Pick the model ("auto" or a provider id). */
+export const setBrain = (choice: string) =>
+  post('/brain', { choice }).then((ok) => {
+    brainSubs.forEach((f) => f())
+    return ok
+  })
+
 /** Open the setup screen (name, city, voice, look, features). */
 export function openSetup() {
   window.dispatchEvent(new Event('jarvis-setup'))

@@ -21,7 +21,7 @@ import { displayServer } from './panels.mjs'
 import { uiServer } from './ui.mjs'
 import { chromeAvailable, chromeServer } from './chrome.mjs'
 import { visionServer } from './vision.mjs'
-import { pcServer } from './pc.mjs'
+import { pcServer, runPcTool } from './pc.mjs'
 import { sendScheduled, showWhatsApp, whatsappServer } from './whatsapp.mjs'
 import { openApp } from './pc.mjs'
 import { status as telemetry } from './telemetry.mjs'
@@ -29,6 +29,8 @@ import { spawn as spawnProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { FEATURES, identityPrompt, readProfile, saveProfile } from './profile.mjs'
+import { OFFLINE_PROMPT, PROVIDERS, brainMode, brainState, brainsInfo, checkBrain, currentBrain, localEnv, markExhausted, maskedKeys, proxyModel, quickAnswer, quickCommand, saveChoice, saveKeys, setProxyCheck, useLocal } from './brain.mjs'
+import { PROXY_URL, proxyIsUp, proxyKey, startProxy } from './litellm.mjs'
 import { fileURLToPath } from 'node:url'
 
 const SCRIPTS = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'scripts')
@@ -106,11 +108,24 @@ const popupMode = () => existsSync(POPUP_MODE_FILE)
 let popupHiddenOnPurpose = false
 let popupRespawns = []
 
-/** Open the onscreen popup, unless it is already open. */
-function showPopup() {
+/**
+ * Start the onscreen popup, unless it is already running. `open`: the user
+ * asked to see it (the Assistant button, "turn on onscreen jarvis") — it
+ * starts opened out, or, already running as the notch, opens out. Started by
+ * itself (sign-in, a restart, the keep-alive) it starts as the notch and only
+ * a click opens it.
+ */
+function showPopup(open = false) {
   popupHiddenOnPurpose = false
+  if (open) {
+    try {
+      writeFileSync(join(homedir(), '.jarvis', 'popup-open'), String(Date.now()))
+    } catch {
+      /* the popup simply stays as it is */
+    }
+  }
   if (popupProc && popupProc.exitCode === null) return false
-  const proc = spawnProcess('powershell.exe', [...PS_ARGS, join(SCRIPTS, 'popup.ps1')], {
+  const proc = spawnProcess('powershell.exe', [...PS_ARGS, join(SCRIPTS, 'popup.ps1'), ...(open ? ['-Open'] : [])], {
     stdio: 'ignore',
     windowsHide: true,
   })
@@ -1182,7 +1197,7 @@ const handleRequest = async (req, res) => {
     res.writeHead(200, { ...cors, 'content-type': 'application/json' })
     // `clients` is how many JARVIS windows are connected; the background wake
     // listener (scripts/wake_listener.py) stands down while there is one.
-    return res.end(JSON.stringify({ ok: true, tts: eleven, stt: eleven, clients: CLIENTS.size }))
+    return res.end(JSON.stringify({ ok: true, tts: eleven, stt: eleven, clients: CLIENTS.size, brain: brainMode(), model: useLocal() ? brainState().model : null }))
   }
 
   // "Hey Jarvis" from the background wake listener (scripts/wake_listener.py),
@@ -1196,6 +1211,30 @@ const handleRequest = async (req, res) => {
   // The profile (setup screen). Saving one that switches features on or off
   // restarts the bridge (exit 75; start.mjs brings it straight back), because
   // the tool servers are chosen when it starts.
+  // The model dropdown: which brains there are, which is chosen and in use.
+  if (req.method === 'GET' && req.url === '/brains') {
+    res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    return res.end(JSON.stringify(brainsInfo()))
+  }
+  if (req.method === 'POST' && req.url === '/brain') {
+    const body = await readJson(req)
+    saveChoice(String(body.choice ?? 'auto'))
+    const next = currentBrain()
+    if (next !== activeBrain) switchBrains(next ? `I'm on ${PROVIDERS[next].label} now.` : null)
+    res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8' })
+    return res.end(JSON.stringify(brainsInfo()))
+  }
+  // AI provider keys (setup): shown masked, saved to ~/.jarvis/keys.json.
+  if (req.method === 'GET' && req.url === '/keys') {
+    res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    return res.end(JSON.stringify(maskedKeys()))
+  }
+  if (req.method === 'POST' && req.url === '/keys') {
+    const changed = saveKeys(await readJson(req))
+    if (changed) await startProxy()
+    res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8' })
+    return res.end(JSON.stringify({ keys: maskedKeys(), ...brainsInfo() }))
+  }
   if (req.method === 'GET' && req.url === '/profile') {
     res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
     return res.end(JSON.stringify(readProfile()))
@@ -1261,7 +1300,8 @@ const handleRequest = async (req, res) => {
     return res.end(JSON.stringify({ ...popupState, connected: CLIENTS.size > 0 }))
   }
   if (req.method === 'POST' && req.url === '/popup/show') {
-    const opened = showPopup()
+    // Asked for: open it out (or start it opened out).
+    const opened = showPopup(true)
     res.writeHead(200, { ...cors, 'content-type': 'application/json' })
     return res.end(JSON.stringify({ opened }))
   }
@@ -1301,6 +1341,20 @@ const handleRequest = async (req, res) => {
   // Tapped while muted, it unmutes first: that is plainly what is wanted.
   if (req.method === 'POST' && req.url === '/popup/mic') {
     if (muted) setMuted(false)
+    // Offline: the window's recogniser (Chrome's) cannot hear without the
+    // internet, so the wake listener hears the command instead, with Vosk —
+    // it beeps, listens and sends what it heard as a request.
+    if (useLocal()) {
+      try {
+        writeFileSync(join(homedir(), '.jarvis', 'listen-now'), String(Date.now()))
+      } catch {
+        /* the listener is not set up */
+      }
+      popupState.heard = 'Listening (offline)…'
+      popupState.said = ''
+      res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8' })
+      return res.end(JSON.stringify({ sent: 0, offline: true }))
+    }
     const sent = broadcast({ type: 'mic' })
     if (!sent && popupMode()) {
       startWindow()
@@ -1319,7 +1373,7 @@ const handleRequest = async (req, res) => {
   // Live readings for the HUD gauges. Cheap: the slow parts are cached.
   if (req.method === 'GET' && req.url === '/status') {
     res.writeHead(200, { ...cors, 'content-type': 'application/json', 'cache-control': 'no-store' })
-    return res.end(JSON.stringify(telemetry()))
+    return res.end(JSON.stringify({ ...telemetry(), brain: brainMode(), brainModel: useLocal() ? brainState().model : null }))
   }
 
   // The calendar: list, add and remove events (they are reminders, so they
@@ -1703,6 +1757,107 @@ server.on('error', (err) => {
 await new Promise((resolve) => server.listen(PORT, HOST, resolve))
 // This bridge owns the port: now, and only now, its key is the one to use.
 publishToken()
+// The brain: which AI answers. Claude when the internet is up; Gemini, Groq
+// or OpenRouter (through LiteLLM) when chosen in the dropdown or when Claude's
+// limit is reached; the local Ollama model offline. Checked now and every 6 s;
+// when it changes, each window is dropped so it reconnects (at once, quietly)
+// onto a session with the new brain, and is told so once.
+setProxyCheck(proxyIsUp)
+await checkBrain()
+void startProxy()
+let activeBrain = currentBrain()
+console.log(`[jarvis] brain: ${activeBrain ?? 'none'}${activeBrain === 'local' ? ` (${brainState().model})` : ''}`)
+let brainNews = null
+/** A request cut off by a limit, re-sent once the window is on the new brain. */
+let retryAsk = null
+
+/** Move every window onto the brain now chosen, saying why. */
+function switchBrains(news) {
+  const next = currentBrain()
+  activeBrain = next
+  brainNews = news
+  console.log(`[jarvis] brain now: ${next ?? 'none'} (${news})`)
+  for (const ws of CLIENTS) {
+    try {
+      ws.close(4001, 'brain switch')
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+setInterval(async () => {
+  const wasOnline = brainState().online
+  await checkBrain()
+  const next = currentBrain()
+  if (next === activeBrain) return
+  const label = next ? PROVIDERS[next].label : 'nothing'
+  switchBrains(
+    !brainState().online && wasOnline
+      ? next === 'local'
+        ? "The internet is down, so I'm running on my local model now. I'm slower, and I can only do things on this PC."
+        : "The internet is down and there is no local model installed, so I can't think until it's back."
+      : brainState().online && !wasOnline
+        ? `We're back online. I'm on ${label} again.`
+        : `I'm on ${label} now.`,
+  )
+}, 6_000).unref() // every 6 s: offline voice needs the switch made quickly
+
+/** The session's options for the brain in use. */
+function withBrain(o) {
+  const id = currentBrain()
+  if (!id || id === 'claude') return o
+  if (id === 'local') {
+    const keep = ['jarvis_pc', 'jarvis_assistant']
+    const local = {
+      ...o,
+      env: localEnv(),
+      model: brainState().model,
+      // A small model is faster and steadier without a thinking pass.
+      thinking: { type: 'disabled' },
+      maxTurns: 8,
+      // No built-in file tools, and only the on-PC servers: every tool schema
+      // is context the small model has to read on every turn.
+      tools: [],
+      mcpServers: Object.fromEntries(Object.entries(o.mcpServers).filter(([k]) => keep.includes(k))),
+      systemPrompt: identityPrompt() + OFFLINE_PROMPT + memoryPrompt(),
+    }
+    delete local.effort
+    return local
+  }
+  // Gemini, Groq, OpenRouter: the same agent and tools, through LiteLLM.
+  const viaProxy = {
+    ...o,
+    env: {
+      ...process.env,
+      ANTHROPIC_BASE_URL: PROXY_URL,
+      ANTHROPIC_AUTH_TOKEN: proxyKey(),
+      ANTHROPIC_API_KEY: '',
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      // Fail fast on a busy provider ("503 high demand" on Gemini's free
+      // tier was retried for minutes): one retry, 45 s each, then the limit
+      // check moves JARVIS to the next model.
+      CLAUDE_CODE_MAX_RETRIES: '1',
+      API_TIMEOUT_MS: '45000',
+    },
+    model: proxyModel(id),
+    thinking: { type: 'disabled' },
+  }
+  delete viaProxy.effort
+  return viaProxy
+}
+
+/**
+ * Did this turn fail on a usage or rate limit (or run out of credit)? Such a
+ * turn can end as an error, or as a "success" whose text is the API's error.
+ */
+// A provider timing out (litellm.mjs gives each request 40 s) counts too: the
+// next model answering beats waiting on one that has stopped.
+const LIMIT = /usage limit|rate.?limit|\b429\b|\b529\b|quota|credit balance|insufficient_quota|resource.?exhausted|too many requests|overloaded|billing|timed? ?out|timeout|deadline exceeded/i
+function limitHit(msg) {
+  const text = [msg.result, ...(Array.isArray(msg.errors) ? msg.errors : [msg.errors])].filter(Boolean).join(' ')
+  return LIMIT.test(text) && (msg.subtype !== 'success' || msg.is_error === true || /^(api error|claude ai usage limit)/i.test(String(msg.result ?? '')))
+}
 // Popup mode: the popup is the face, open from the start — and kept open. A
 // popup started by an earlier bridge (before a restart) is not this one's
 // child, so its exit is never seen here; instead every popup stamps
@@ -1788,11 +1943,29 @@ startScheduler({ announce, whatsapp: sendScheduled })
 wss.on('connection', (socket) => {
   console.log('[jarvis] client connected')
   CLIENTS.add(socket)
+  // Just switched brains (internet lost or back): say so, once.
+  if (brainNews) {
+    const news = brainNews
+    brainNews = null
+    setTimeout(() => {
+      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: 'announce', text: news }))
+    }, 2500)
+  }
+  // A request a limit cut off: asked again, now on the new brain.
+  if (retryAsk) {
+    const again = retryAsk
+    retryAsk = null
+    setTimeout(() => {
+      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: 'popup-ask', text: again }))
+    }, 3000)
+  }
 
   // Answer the HUD straight away rather than making it wait for the agent's
   // first turn. Refined later by the real init message.
   socket.send(
-    JSON.stringify({ type: 'ready', servers: Object.keys(MCP_SERVERS) }),
+    // `brain`: offline ("local"), the window speaks with a voice installed on
+    // the PC — Chrome's Google voices need the internet.
+    JSON.stringify({ type: 'ready', servers: Object.keys(MCP_SERVERS), brain: brainMode() }),
   )
   // A window that opens while muted must stay deaf from its first moment.
   socket.send(JSON.stringify({ type: 'mute', on: muted }))
@@ -1996,9 +2169,11 @@ wss.on('connection', (socket) => {
     if (!failed) sendTurn({ type: 'tool', name })
   }
 
-  const session = query({
-    prompt: userMessages(),
-    options: {
+  // The brain this session runs on (a limit marks this one as resting), and the
+  // last request asked of it (re-sent on the next brain if a limit cuts it off).
+  const sessionBrain = currentBrain()
+  let lastAsk = null
+  const sessionOptions = {
       // Everything Claude Code has configured, plus the HUD as an in-process
       // server. The HUD's handler closes over this socket, so a `display` call
       // lands on screen directly — which is also why this object is built per
@@ -2127,8 +2302,8 @@ wss.on('connection', (socket) => {
                 ' unavailable until they enable write access on the machine.',
             }
       },
-    },
-  })
+  }
+  const session = query({ prompt: userMessages(), options: withBrain(sessionOptions) })
 
   // Pump the session's output stream to the browser for as long as it lives.
   ;(async () => {
@@ -2200,7 +2375,24 @@ wss.on('connection', (socket) => {
             // empty text is indistinguishable from a turn that simply had
             // nothing to say — the HUD stops spinning and JARVIS stands there
             // silent. Say what happened instead.
-            if (msg.subtype === 'success') {
+            if (sessionBrain && limitHit(msg) && !(cancelledAsk !== null && cancelledAsk === answering)) {
+              // Out of quota or rate-limited: rest this provider, move to the
+              // next best, and ask the same question there.
+              markExhausted(sessionBrain)
+              const next = currentBrain()
+              const from = PROVIDERS[sessionBrain]?.label ?? sessionBrain
+              const to = next ? PROVIDERS[next].label : null
+              const news =
+                to && next !== sessionBrain
+                  ? `${from}'s limit is reached, so I'm switching to ${to}.`
+                  : `${from}'s limit is reached, and no other model is available right now.`
+              console.log(`[jarvis] limit hit on ${sessionBrain}: ${String(msg.result ?? msg.errors ?? '').slice(0, 200)}`)
+              sendTurn({ type: 'done', text: news })
+              if (to && next !== sessionBrain) {
+                retryAsk = lastAsk
+                setTimeout(() => switchBrains(null), 300)
+              }
+            } else if (msg.subtype === 'success') {
               console.log(`[jarvis] said: ${String(msg.result ?? '').replace(/\s+/g, ' ').slice(0, 300)}`)
               sendTurn({
                 type: 'done',
@@ -2286,6 +2478,7 @@ wss.on('connection', (socket) => {
        */
       const text = msg.text
       const id = typeof msg.id === 'string' ? msg.id : null
+      lastAsk = text
       console.log(`[jarvis] heard: ${text.replace(/\s+/g, ' ').slice(0, 300)}`)
       // A Circle to Search request is an internal instruction with a file
       // path in it; the popup shows a tidy label instead.
@@ -2294,8 +2487,29 @@ wss.on('connection', (socket) => {
         : tidyAttached(text.replace(/^\[.*?\]\s*/, '')).slice(0, 300)
       popupState.said = ''
       popupState.tool = ''
-      void settling.then(() => {
+      void settling.then(async () => {
         answering = id
+        // Offline, plain requests need no model: the time and date, and basic
+        // PC jobs (open/close an app or folder, zip, copy, move, rename, new
+        // folder, volume) run straight away instead of after tens of seconds
+        // on the local model. Anything else goes on to it.
+        if (useLocal()) {
+          let quick = quickAnswer(text) ? { say: quickAnswer(text), tool: null } : null
+          if (!quick) {
+            try {
+              quick = await quickCommand(text, runPcTool)
+            } catch (err) {
+              console.log(`[jarvis] offline quick command failed: ${err.message}`)
+            }
+          }
+          if (quick) {
+            console.log(`[jarvis] offline quick: ${quick.tool ?? 'answer'} -> ${quick.say.slice(0, 120)}`)
+            if (quick.tool) sendTurn({ type: 'tool', name: `mcp__jarvis_pc__${quick.tool}` })
+            sendTurn({ type: 'text', delta: quick.say })
+            sendTurn({ type: 'done', text: quick.say })
+            return
+          }
+        }
         if (deliver) {
           const resolve = deliver
           deliver = null
