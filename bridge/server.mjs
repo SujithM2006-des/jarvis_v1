@@ -33,6 +33,8 @@ import { OFFLINE_PROMPT, PROVIDERS, brainMode, brainState, brainsInfo, checkBrai
 import { PROXY_URL, proxyIsUp, proxyKey, startProxy } from './litellm.mjs'
 import { newsPrompt, newsServer, startNews } from './news.mjs'
 import { PROMPT_CREATOR, creatorServer } from './creator.mjs'
+import { PROMPT_SKILLS, skillsServer } from './skills.mjs'
+import { PROMPT_EXTRAS, extrasServer, startRoutines } from './extras.mjs'
 
 // A reel takes minutes (images, voices, ffmpeg); let tool calls run that long.
 process.env.MCP_TOOL_TIMEOUT ??= String(20 * 60_000)
@@ -936,6 +938,8 @@ const SYSTEM_PROMPT = [
   DISABLED.has('whatsapp') ? '' : PROMPT_WHATSAPP,
   PROMPT_ASSISTANT,
   PROMPT_CREATOR,
+  PROMPT_SKILLS,
+  PROMPT_EXTRAS,
   PROMPT_TOOLS,
 ].join('')
 
@@ -1773,6 +1777,9 @@ await checkBrain()
 void startProxy()
 // The news: fetched now and every 2 hours, whenever the internet is up.
 startNews(() => brainState().online)
+// Routines: at their time, asked of the window as if typed in the popup.
+// Only while a window is open (true when one took it).
+startRoutines((request) => broadcast({ type: 'popup-ask', text: request }) > 0)
 let activeBrain = currentBrain()
 console.log(`[jarvis] brain: ${activeBrain ?? 'none'}${activeBrain === 'local' ? ` (${brainState().model})` : ''}`)
 let brainNews = null
@@ -2221,6 +2228,12 @@ wss.on('connection', (socket) => {
         jarvis_news: newsServer(),
         // Websites, images, voiceovers, reels from a script, video editing.
         jarvis_creator: creatorServer(),
+        // Web search and pages (for every brain), Python, Office files,
+        // downloads, image edits.
+        jarvis_skills: skillsServer(),
+        // OCR, QR codes, YouTube captions, routes, currency, dictionary,
+        // folder tidying, routines.
+        jarvis_extras: extrasServer(),
         ...(DISABLED.has('whatsapp')
           ? {}
           : { jarvis_whatsapp: whatsappServer({ allowWrites: ALLOW_WRITES }) }),

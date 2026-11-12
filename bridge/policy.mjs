@@ -32,6 +32,8 @@ import { PC_WRITE_TOOLS } from './pc.mjs'
 import { CUSTOM_WRITE_TOOLS } from './customize.mjs'
 import { WHATSAPP_WRITE_TOOLS } from './whatsapp.mjs'
 import { CREATOR_WRITE_TOOLS } from './creator.mjs'
+import { SKILL_WRITE_TOOLS } from './skills.mjs'
+import { EXTRA_WRITE_TOOLS } from './extras.mjs'
 
 /**
  * Both spellings of every renamed built-in are listed on purpose. The SDK
@@ -174,6 +176,14 @@ export function decideTool(name, allowWrites = false) {
     // Making things (websites, images, voiceovers, videos): writes files, so
     // only with writes enabled, like the file tools.
     if (server === 'jarvis_creator') return CREATOR_WRITE_TOOLS.has(tool) ? allowWrites : true
+
+    // Web search and reading run freely; Python, new files, downloads and image
+    // edits need writes (Python's risky code also needs the user's yes).
+    if (server === 'jarvis_skills') return SKILL_WRITE_TOOLS.has(tool) ? allowWrites : true
+
+    // OCR, captions, routes, currency and words run freely; QR files, tidying
+    // folders and routines change things, so they need writes.
+    if (server === 'jarvis_extras') return EXTRA_WRITE_TOOLS.has(tool) ? allowWrites : true
 
     // Customising his own look and voice. Restyling writes a stylesheet into
     // the project, so it needs allowWrites; measuring a recording and setting
