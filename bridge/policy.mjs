@@ -31,6 +31,7 @@ import { blockedAddress, vetTarget } from './net.mjs'
 import { PC_WRITE_TOOLS } from './pc.mjs'
 import { CUSTOM_WRITE_TOOLS } from './customize.mjs'
 import { WHATSAPP_WRITE_TOOLS } from './whatsapp.mjs'
+import { CREATOR_WRITE_TOOLS } from './creator.mjs'
 
 /**
  * Both spellings of every renamed built-in are listed on purpose. The SDK
@@ -169,6 +170,10 @@ export function decideTool(name, allowWrites = false) {
 
     // The news: read-only headlines stored on this PC (and a refresh fetch).
     if (server === 'jarvis_news') return true
+
+    // Making things (websites, images, voiceovers, videos): writes files, so
+    // only with writes enabled, like the file tools.
+    if (server === 'jarvis_creator') return CREATOR_WRITE_TOOLS.has(tool) ? allowWrites : true
 
     // Customising his own look and voice. Restyling writes a stylesheet into
     // the project, so it needs allowWrites; measuring a recording and setting

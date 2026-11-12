@@ -32,6 +32,10 @@ import { FEATURES, identityPrompt, readProfile, saveProfile } from './profile.mj
 import { OFFLINE_PROMPT, PROVIDERS, brainMode, brainState, brainsInfo, checkBrain, currentBrain, localEnv, markExhausted, maskedKeys, proxyModel, quickAnswer, quickCommand, saveChoice, saveKeys, setProxyCheck, useLocal } from './brain.mjs'
 import { PROXY_URL, proxyIsUp, proxyKey, startProxy } from './litellm.mjs'
 import { newsPrompt, newsServer, startNews } from './news.mjs'
+import { PROMPT_CREATOR, creatorServer } from './creator.mjs'
+
+// A reel takes minutes (images, voices, ffmpeg); let tool calls run that long.
+process.env.MCP_TOOL_TIMEOUT ??= String(20 * 60_000)
 import { fileURLToPath } from 'node:url'
 
 const SCRIPTS = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'scripts')
@@ -931,6 +935,7 @@ const SYSTEM_PROMPT = [
   PC_ENABLED ? PROMPT_PC : '',
   DISABLED.has('whatsapp') ? '' : PROMPT_WHATSAPP,
   PROMPT_ASSISTANT,
+  PROMPT_CREATOR,
   PROMPT_TOOLS,
 ].join('')
 
@@ -2214,6 +2219,8 @@ wss.on('connection', (socket) => {
         jarvis_custom: customizeServer({ ask, allowWrites: ALLOW_WRITES }),
         // Today's news in every sector, refreshed every 2 hours online.
         jarvis_news: newsServer(),
+        // Websites, images, voiceovers, reels from a script, video editing.
+        jarvis_creator: creatorServer(),
         ...(DISABLED.has('whatsapp')
           ? {}
           : { jarvis_whatsapp: whatsappServer({ allowWrites: ALLOW_WRITES }) }),
