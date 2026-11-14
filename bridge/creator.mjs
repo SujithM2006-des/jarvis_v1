@@ -24,13 +24,24 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { VideoLimitError, flowCredits, openGeminiLogin, planVideo } from './geminiweb.mjs'
+import {
+  ImageLimitError,
+  VideoLimitError,
+  chatgptImage,
+  flowAddCharacter,
+  flowCharacterList,
+  flowCredits,
+  flowRememberTextCharacter,
+  openChatgptLogin,
+  openGeminiLogin,
+  planVideo,
+} from './geminiweb.mjs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, extname, join, normalize, resolve as resolvePath, sep } from 'node:path'
 import { readKeys } from './brain.mjs'
 
 export const CREATOR_WRITE_TOOLS = new Set([
-  'create_website', 'generate_image', 'voiceover', 'make_reel', 'generate_video_clip', 'edit_video',
+  'create_website', 'generate_image', 'voiceover', 'make_reel', 'generate_video_clip', 'edit_video', 'create_story_characters',
 ])
 
 const HOME = homedir()
@@ -54,6 +65,66 @@ const outFile = (dir, name, ext) => {
   return f
 }
 const geminiKey = () => readKeys().gemini?.key || null
+
+// ------------------------------------------------------------- story characters
+//
+// A story's characters: a reference picture of each from the user's ChatGPT,
+// uploaded to Google Flow as a named character, so every scene shows the same
+// faces. Pictures are kept in Pictures\Jarvis\Characters.
+
+const CHARACTERS_DIR = join(OUT.pictures, 'Characters')
+const lower = (s) => String(s).trim().toLowerCase()
+
+/** A child (by the description), for whom Flow won't take a realistic photo. */
+const isChild = (d) => /\b(\d|1[0-7])[- ]?(year|yr)s?[- ]?old\b|\b(child|kid|boy|girl|baby|toddler|teen(ager)?|schoolboy|schoolgirl|son|daughter)\b/i.test(d) && !/\b(man|woman|adult|grown)\b/i.test(d)
+
+/** One character: ChatGPT draws the reference, Flow gets it with the name and description. */
+async function makeCharacter({ name, description }, style) {
+  // Google Flow refuses realistic photos of children as characters, so a
+  // child is drawn in an animated style unless another was asked for.
+  style ??= isChild(description) ? 'Pixar-style 3D animated character, soft cinematic lighting' : 'photorealistic, cinematic lighting'
+  if (isChild(description) && /photo|realistic|real life/i.test(style)) style = 'Pixar-style 3D animated character, soft cinematic lighting'
+  const file = outFile(CHARACTERS_DIR, name, '.png')
+  await chatgptImage(
+    `Create a character reference image of ${name}: ${description}. Full body, front view, neutral standing pose, ` +
+      `plain white background, ${style}. Only this one character, no text, labels or watermark.`,
+    file,
+  )
+  // Children: Flow refuses to animate them from a picture (even a cartoon), so
+  // they are kept in words and described in every scene instead.
+  if (isChild(description)) flowRememberTextCharacter({ name, description: `${description}; ${style}`, image: file })
+  else await flowAddCharacter({ name, description, image: file })
+  return file
+}
+
+/**
+ * Make sure every named character is in Flow before any scene is generated:
+ * the ones missing are made from `cast` (name + description). Throws if a
+ * character is missing and has no description to make it from.
+ */
+async function ensureCharacters(names, cast = [], style) {
+  const have = new Set(flowCharacterList().map((c) => lower(c.name)))
+  const made = []
+  const missing = []
+  for (const n of [...new Set(names.map((x) => String(x).trim()).filter(Boolean))]) {
+    if (have.has(lower(n))) continue
+    const c = cast.find((x) => lower(x.name) === lower(n))
+    if (!c?.description) {
+      missing.push(n)
+      continue
+    }
+    await makeCharacter(c, style)
+    have.add(lower(n))
+    made.push(n)
+  }
+  if (missing.length) {
+    throw new Error(
+      `${missing.join(', ')} ${missing.length > 1 ? "aren't" : "isn't"} in Google Flow yet, and there's no description to make ` +
+        `${missing.length > 1 ? 'them' : 'it'} from. Describe ${missing.length > 1 ? 'them' : 'it'} (create_story_characters) first.`,
+    )
+  }
+  return made
+}
 const openFile = (f) => spawn('cmd.exe', ['/c', 'start', '""', f], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
 
 // ---------------------------------------------------------------- ffmpeg
@@ -355,8 +426,12 @@ async function veoModel() {
  * is reached, or Gemini isn't available, the remaining scenes fall back to
  * 'still': a generated picture with a slow zoom.
  */
-export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore', subtitles = true, music, motion = 'ai' }) {
+export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore', subtitles = true, music, motion = 'ai', cast = [], style }) {
   if (!findTool('ffmpeg')) throw new Error('ffmpeg is not installed yet, so videos cannot be put together.')
+  // Every character any scene uses must be in Flow before the first scene is
+  // made (the missing ones are drawn in ChatGPT and uploaded now).
+  let madeCharacters = []
+  if (motion === 'ai') madeCharacters = await ensureCharacters(scenes.flatMap((s) => s.characters ?? []), cast, style)
   const [W, H] = SIZES[aspect]
   const work = join(tmpdir(), `jarvis-reel-${stamp()}`)
   mkdirSync(work, { recursive: true })
@@ -403,7 +478,7 @@ export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore'
             `${s.visual}. Photorealistic, cinematic lighting, realistic natural motion, smooth camera movement. ` +
               `${said ? 'Ambient sound only, no dialogue.' : 'A fitting cinematic soundtrack with ambient sound, no dialogue.'} ` +
               'No text, captions, subtitles or watermarks in the video.',
-            { aspect: aspect === '16:9' ? '16:9' : '9:16', out: join(work, `s${i}-ai.mp4`) },
+            { aspect: aspect === '16:9' ? '16:9' : '9:16', out: join(work, `s${i}-ai.mp4`), characters: s.characters ?? [] },
           )
           moving = r.file
           aiClips++
@@ -476,7 +551,7 @@ export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore'
     } else {
       await ffmpeg(['-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', final])
     }
-    return { file: final, seconds: await duration(final).catch(() => null), voiceBy, aiClips, aiNote }
+    return { file: final, seconds: await duration(final).catch(() => null), voiceBy, aiClips, aiNote, madeCharacters }
   } finally {
     rmSync(work, { recursive: true, force: true })
   }
@@ -646,10 +721,16 @@ export function creatorServer() {
                 visual: z.string().describe('The moving shot: subject (fully described, same words every scene for a recurring character), action, setting, light, camera move'),
                 narration: z.string().optional().describe('Voiceover for the scene; leave out for a cinematic reel that runs on the video\'s own music and sound'),
                 text: z.string().optional().describe('A short on-screen caption at the top (2-6 words)'),
+                characters: z.array(z.string()).optional().describe('Names of the story characters in this scene/page; each is attached in Flow before the scene is generated'),
               }),
             )
             .min(1)
             .max(12),
+          cast: z
+            .array(z.object({ name: z.string(), description: z.string() }))
+            .optional()
+            .describe('Descriptions of the characters (look, age, clothes, style) — any not yet in Flow are drawn in ChatGPT and uploaded before the first scene'),
+          style: z.string().optional().describe('Look of the character pictures, e.g. "photorealistic", "Pixar-style 3D animation", "anime"'),
           aspect: z.enum(['9:16', '16:9', '1:1', '4:5']).optional(),
           voice: z.string().optional(),
           subtitles: z.boolean().optional().describe('Default true'),
@@ -670,6 +751,7 @@ export function creatorServer() {
                     ? 'pictures with a slow zoom'
                     : `pictures with a slow zoom — no AI video (${r.aiNote || 'not available'})`
             return text(
+              (r.madeCharacters?.length ? `New characters made in ChatGPT and added to Flow first: ${r.madeCharacters.join(', ')}. ` : '') +
               `Reel "${basename(r.file)}" made: ${args.scenes.length} scenes${r.seconds ? `, ${r.seconds.toFixed(0)} s` : ''}, ` +
                 `${args.aspect ?? '9:16'}, ${kind}, ${r.voiceBy ? `${r.voiceBy} voice` : "no voiceover (the video's own sound)"}, in ${Math.round((Date.now() - t0) / 1000)} s. ` +
                 `Saved to ${r.file} and playing now.`,
@@ -685,14 +767,21 @@ export function creatorServer() {
           "GOOGLE FLOW in JARVIS's window (the user's choice for every video; about 12 credits a clip), " +
           "falling back to the Gemini app's daily videos only if Flow can't. 1-6 minutes. Describe the " +
           'subject, action, setting, mood and camera movement.',
-        { prompt: z.string(), aspect: z.enum(['9:16', '16:9']).optional(), name: z.string().optional() },
-        async ({ prompt, aspect = '9:16', name }) => {
+        {
+          prompt: z.string(),
+          aspect: z.enum(['9:16', '16:9']).optional(),
+          name: z.string().optional(),
+          characters: z.array(z.string()).optional().describe('Story characters in the clip (attached in Flow first)'),
+          cast: z.array(z.object({ name: z.string(), description: z.string() })).optional().describe('Descriptions for characters not yet in Flow'),
+        },
+        async ({ prompt, aspect = '9:16', name, characters = [], cast = [] }) => {
           // Google Flow first, always (then the Gemini app); the API's Veo only
           // if both fail and the key happens to have it.
           const f = outFile(OUT.videos, name ?? `ai video ${stamp()}`, '.mp4')
           let planErr
           try {
-            const r = await planVideo(prompt, { aspect, out: f })
+            if (characters.length) await ensureCharacters(characters, cast)
+            const r = await planVideo(prompt, { aspect, out: f, characters })
             openFile(f)
             return text(`AI video made with ${r.by === 'Flow' ? 'Google Flow' : 'the Gemini app (Flow was unavailable)'} in ${r.seconds} s: ${f} (playing now).`)
           } catch (err) {
@@ -742,6 +831,68 @@ export function creatorServer() {
             return text("Gemini's sign-in window is open. Once they're signed in, AI videos will work.")
           } catch (err) {
             return failText(`Couldn't open the Gemini window: ${err.message}`)
+          }
+        },
+      ),
+      tool(
+        'create_story_characters',
+        "Make a story's characters before its video: for each, a character reference picture is drawn " +
+          "in the user's ChatGPT (JARVIS's window) and uploaded to Google Flow as a named character, so " +
+          'every scene shows the same faces. About 20-40 s per character. Characters already in Flow are ' +
+          'skipped unless remake is true. Describe each fully: age, face, hair, skin, build, clothes, style.',
+        {
+          characters: z.array(z.object({ name: z.string(), description: z.string() })).min(1).max(12),
+          style: z.string().optional().describe('e.g. "photorealistic", "Pixar-style 3D animation", "anime", "claymation"'),
+          remake: z.boolean().optional(),
+        },
+        async ({ characters, style, remake = false }) => {
+          const have = new Set(flowCharacterList().map((c) => lower(c.name)))
+          const done = []
+          const skipped = []
+          for (const c of characters) {
+            if (!remake && have.has(lower(c.name))) {
+              skipped.push(c.name)
+              continue
+            }
+            try {
+              const file = await makeCharacter(c, style)
+              done.push(`${c.name} (${basename(file)})`)
+            } catch (err) {
+              const why = err instanceof ImageLimitError ? "ChatGPT's picture limit is reached for now" : String(err.message).split('\n')[0]
+              return failText(
+                `${done.length ? `Made and added to Flow: ${done.join(', ')}. ` : ''}Stopped at ${c.name}: ${why}.`,
+              )
+            }
+          }
+          return text(
+            `${done.length ? `Made in ChatGPT: ${done.join(', ')} (pictures in ${CHARACTERS_DIR}). Adults are added to Google Flow as characters; children are kept as written descriptions used in every scene, because Flow won't animate children from a picture.` : ''}` +
+              `${skipped.length ? ` Already in Flow: ${skipped.join(', ')}.` : ''}`,
+          )
+        },
+      ),
+      tool(
+        'list_story_characters',
+        'The story characters JARVIS has made in Google Flow (name and description).',
+        {},
+        async () => {
+          const list = flowCharacterList()
+          return text(
+            list.length
+              ? list.map((c) => `- ${c.name}${c.textOnly ? ' (a child: described in words in each scene, as Flow won\'t animate children from a picture)' : ' (a Flow character)'}: ${c.description}`).join('\n')
+              : 'No story characters yet.',
+          )
+        },
+      ),
+      tool(
+        'chatgpt_login',
+        "Open ChatGPT in JARVIS's window so the user can sign in once (needed for character pictures). They type the password themselves.",
+        {},
+        async () => {
+          try {
+            await openChatgptLogin()
+            return text("ChatGPT's sign-in is open in my window.")
+          } catch (err) {
+            return failText(`Couldn't open ChatGPT: ${err.message}`)
           }
         },
       ),
@@ -814,6 +965,21 @@ export const PROMPT_CREATOR = `Creating things — the jarvis_creator tools:
   (say so). Flow costs about 12 credits a clip; video_credits says how many
   are left.
 - If AI video says they aren't signed in: gemini_login, then they sign in once.
+- STORIES WITH CHARACTERS (consistent faces across scenes):
+  * "Generate the characters for this story": list every character with a full
+    visual description (age, face, hair, skin, build, clothes; and the style —
+    photorealistic, Pixar-style 3D, anime …) and call create_story_characters.
+    Each is drawn in their ChatGPT and uploaded to Google Flow as a character.
+  * "Give me the video prompts": write them CHARACTER-WISE — one prompt per
+    scene, naming exactly which characters appear and what each one does,
+    using the same names as in Flow.
+  * A script to make "page-wise" / "slide-wise" / scene by scene: each page or
+    slide is one scene in make_reel; put the names of EVERY character on that
+    page in its \`characters\` (they are attached in Flow before that scene is
+    generated), and pass the descriptions in \`cast\` so any character not yet
+    in Flow is made first. Never leave a character out of a scene's list.
+  * list_story_characters shows who is already in Flow. If ChatGPT isn't
+    signed in: chatgpt_login.
 - "Edit the video …", "add a voiceover", "cut the first 5 seconds", "make it
   vertical": edit_video on the file (the last video you made unless they name
   one). "Give it a voiceover" with a script: the voiceover step in edit_video.

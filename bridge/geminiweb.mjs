@@ -311,13 +311,13 @@ const thumbs = (page) =>
  * One clip through Google Flow, saved to `out` (MP4 with sound). Throws
  * VideoLimitError when the credits are used up, Error otherwise.
  */
-export function flowVideo(prompt, { aspect = '9:16', out } = {}) {
-  const run = busy.then(() => makeFlowVideo(prompt, aspect, out))
+export function flowVideo(prompt, { aspect = '9:16', out, characters = [] } = {}) {
+  const run = busy.then(() => makeFlowVideo(prompt, aspect, out, characters))
   busy = run.catch(() => {})
   return run
 }
 
-async function makeFlowVideo(prompt, aspect, out) {
+async function makeFlowVideo(prompt, aspect, out, characters = []) {
   await ensureChrome()
   const b = await connect()
   let page
@@ -328,10 +328,32 @@ async function makeFlowVideo(prompt, aspect, out) {
     await configureFlow(page, p.state, aspect)
     await clearFlowOverlays(page)
 
+    // The grid fills in gradually: wait until it stops growing before noting
+    // which videos are already there, or an old one appearing late looks new.
+    let seen = -1
+    for (let i = 0; i < 20; i++) {
+      await page.waitForTimeout(1500)
+      const n = (await thumbs(page)).length
+      if (n === seen) break
+      seen = n
+    }
     const before = new Set(await thumbs(page))
+    // The agent's conversation so far: only what it says after this point is
+    // its answer to this request (older turns can hold old errors).
+    const agentText = () =>
+      page.evaluate(() => {
+        const t = document.body.innerText
+        return t.slice(0, Math.max(0, t.lastIndexOf('What do you want to create?')))
+      })
+    const earlier = await agentText()
+    // The scene's characters go into the prompt first, so Flow draws them as
+    // made; those kept in words (children) are described in the prompt itself.
+    const { attach, written } = castFor(characters)
+    if (attach.length) await attachCharacters(page, attach)
+    const looks = written.map((c) => `${c.name} looks exactly like this in every shot: ${c.description}.`).join(' ')
     const box = page.locator('[role="textbox"][aria-label="What do you want to create?"]')
     await box.first().click({ timeout: 15_000 })
-    await page.keyboard.type(`Create a video: ${prompt.replace(/\s+/g, ' ').slice(0, 1500)}`)
+    await page.keyboard.type(`Create a video: ${`${prompt} ${looks}`.replace(/\s+/g, ' ').trim().slice(0, 2500)}`)
     await page.getByRole('button', { name: 'Start generation' }).click({ timeout: 10_000 })
 
     const t0 = Date.now()
@@ -341,7 +363,11 @@ async function makeFlowVideo(prompt, aspect, out) {
       // Tiles are newest first. A new tile's thumbnail link plus "=mm,22,15"
       // is its video — served only once the clip is finished, so keep asking
       // until the answer really is a video.
-      const fresh = (await thumbs(page)).find((s) => !before.has(s))
+      // Only the newest tile (Flow lists newest first) can be this request's;
+      // anything appearing further down is an older video loading late.
+      const list = await thumbs(page)
+      for (const s of list.slice(1)) before.add(s)
+      const fresh = list[0] && !before.has(list[0]) ? list[0] : null
       if (fresh) {
         const r = await ctx.request.get(`${fresh}=mm,22,15`, { timeout: 180_000 }).catch(() => null)
         if (r?.ok() && /video/.test(r.headers()['content-type'] ?? '')) {
@@ -350,16 +376,14 @@ async function makeFlowVideo(prompt, aspect, out) {
         }
         continue
       }
-      // What the agent says, for credits running out or a refusal.
-      const said = await page.evaluate(() => {
-        const t = document.body.innerText
-        const i = t.lastIndexOf('What do you want to create?')
-        return t.slice(Math.max(0, i - 600), i).replace(/\s+/g, ' ')
-      })
+      // What the agent has said since this request, for credits running out
+      // or a refusal ("Please edit your prompt and try again").
+      const now = await agentText()
+      const said = (now.startsWith(earlier.slice(0, 200)) ? now.slice(earlier.length) : now.slice(-600)).replace(/\s+/g, ' ')
       if (/(not enough|out of|run out of|insufficient|no more).{0,20}credits/i.test(said)) {
         throw new VideoLimitError('Google Flow credits for this month are used up.')
       }
-      if (/(couldn't|could not|can't|cannot|unable to) (generate|create|make)|violat|policy|blocked/i.test(said)) {
+      if (/(couldn't|could not|can't|cannot|unable to) (generate|create|make)|violat|policy|blocked|edit your prompt and try again/i.test(said)) {
         saidSince ||= Date.now()
         if (Date.now() - saidSince > 30_000) throw new Error(`Flow says: ${said.slice(-240)}`)
       }
@@ -399,12 +423,18 @@ export async function flowCredits() {
  * can't (credits used up, or Flow failing). VideoLimitError only when both
  * are used up.
  */
-export async function planVideo(prompt, { aspect = '9:16', out } = {}) {
+export async function planVideo(prompt, { aspect = '9:16', out, characters = [] } = {}) {
   let flowErr
   try {
-    return await flowVideo(prompt, { aspect, out })
+    return await flowVideo(prompt, { aspect, out, characters })
   } catch (err) {
     flowErr = err
+    // A missing character is a mistake to fix, not a reason to draw the
+    // scene without them somewhere else.
+    if (/isn't in Flow yet/.test(String(err.message))) throw err
+    // The Gemini app can't use Flow's characters, and a scene drawn without
+    // them breaks the story's look: stop here instead.
+    if (characters.length) throw err
     console.log(`[jarvis] Google Flow video unavailable (${String(err.message).split('\n')[0]}) - trying the Gemini app`)
   }
   try {
@@ -415,5 +445,233 @@ export async function planVideo(prompt, { aspect = '9:16', out } = {}) {
     }
     // Report Flow's problem: it is the one the user relies on.
     throw err instanceof VideoLimitError ? flowErr : err
+  }
+}
+
+// ============================================================ Flow characters
+//
+// A story's characters, made once and reused in every scene so they look the
+// same throughout: each is a picture (from ChatGPT) uploaded as a Flow
+// character with its name and personality. Before a scene's prompt, the
+// characters in it are attached from the prompt box's ingredients (+ >
+// Characters > the name > Add to prompt). Kept in ~/.jarvis/flow.json as
+// characters: { "<lower name>": { name, id, description } }.
+
+const keyOf = (name) => String(name).trim().toLowerCase()
+
+/** The characters JARVIS has made in his Flow project. */
+export function flowCharacterList() {
+  return Object.values(readFlow().characters ?? {})
+}
+
+/**
+ * Remember a character that is described in words rather than uploaded
+ * (children: Flow won't animate them from a picture). Their description is
+ * written into every scene they're in.
+ */
+export function flowRememberTextCharacter({ name, description, image }) {
+  const state = readFlow()
+  state.characters = { ...(state.characters ?? {}), [keyOf(name)]: { name, description, image, textOnly: true } }
+  saveFlow(state)
+}
+
+/** Split a scene's characters: attached in Flow, or written into the prompt. */
+function castFor(names) {
+  const known = readFlow().characters ?? {}
+  const attach = []
+  const written = []
+  for (const n of names) {
+    const c = known[keyOf(n)]
+    if (c?.textOnly) written.push(c)
+    else attach.push(n)
+  }
+  return { attach, written }
+}
+
+/** Upload a picture as a new Flow character, named and described. */
+export function flowAddCharacter({ name, description = '', image }) {
+  const run = busy.then(() => addCharacter(name, description, image))
+  busy = run.catch(() => {})
+  return run
+}
+
+async function addCharacter(name, description, image) {
+  if (!existsSync(image)) throw new Error(`No picture at ${image}`)
+  await ensureChrome()
+  const b = await connect()
+  let page
+  try {
+    const ctx = b.contexts()[0]
+    const p = await openFlowProject(ctx)
+    page = p.page
+    await page.goto(`${p.state.project}/character`, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    await page.waitForTimeout(3000)
+    await dismissFlowNotices(page)
+    const chooser = page.waitForEvent('filechooser', { timeout: 15_000 })
+    await page.getByRole('button', { name: /Upload/ }).first().click({ timeout: 15_000 })
+    await (await chooser).setFiles(image)
+    // "Rights to use this image": the user's own story characters.
+    const agree = page.getByRole('button', { name: 'I agree' })
+    await agree.first().waitFor({ timeout: 8000 }).then(() => agree.first().click(), () => {})
+    await page.waitForURL(/\/character\/[0-9a-f-]+/, { timeout: 60_000 })
+    const id = page.url().split('/character/')[1].split(/[?#]/)[0]
+    const nameBox = page.getByLabel('Character name')
+    await nameBox.fill(name)
+    await nameBox.press('Enter').catch(() => {})
+    if (description) await page.getByLabel('Character personality').fill(description.slice(0, 1500)).catch(() => {})
+    // Wait until the picture has really landed on the character. Flow refuses
+    // some pictures (realistic photos of children, for one) with "Failed to
+    // upload image to character" and the counter stalls at 99%.
+    let landed = false
+    let refused = false
+    for (let i = 0; i < 120 && !landed && !refused; i++) {
+      await page.waitForTimeout(1000)
+      const st = await page.evaluate(() => ({
+        refused: /Failed to upload image to character/i.test(document.body.innerText),
+        pct: /\b\d{1,3}%/.test(document.body.innerText),
+        picture: [...document.querySelectorAll('img')].some((im) => im.naturalWidth > 200),
+      }))
+      refused = st.refused
+      landed = !st.pct && st.picture
+    }
+    if (!landed) {
+      // Don't leave a character without a picture behind.
+      await page.getByRole('button', { name: 'Move to trash' }).click({ timeout: 5000 }).catch(() => {})
+      await page.waitForTimeout(1500)
+      throw new Error(
+        refused
+          ? `Google Flow refused the picture of ${name} (it doesn't accept realistic photos of children; an animated, Pixar-style look works).`
+          : `The picture of ${name} didn't finish uploading to Google Flow.`,
+      )
+    }
+    await page.getByRole('button', { name: 'Done', exact: true }).first().click({ timeout: 10_000 })
+    await page.waitForTimeout(2500)
+    const state = readFlow()
+    state.characters = { ...(state.characters ?? {}), [keyOf(name)]: { name, id, description } }
+    saveFlow(state)
+    return { name, id }
+  } finally {
+    await page?.close().catch(() => {})
+    await b.close().catch(() => {})
+  }
+}
+
+/** Attach characters (by name) to the prompt box from the ingredients picker. */
+async function attachCharacters(page, names) {
+  const attached = []
+  // An attached character shows as an "Ingredient" chip in the prompt box
+  // (with its picture, or just an icon while the picture loads).
+  const chips = () => page.locator('button[aria-label="Ingredient"]').count()
+  for (const n of names) {
+    await clearFlowOverlays(page)
+    const had = await chips()
+    await page.getByRole('button', { name: 'Add ingredients to the prompt box' }).last().click({ timeout: 10_000 })
+    await page.locator('.cdk-overlay-container [role="tab"]').filter({ hasText: 'Characters' }).first().click({ timeout: 8000 })
+    await page.waitForTimeout(1500)
+    const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const opt = page.locator('.cdk-overlay-container [role="option"]').filter({ hasText: new RegExp(`^\\s*${esc}\\s*$`, 'i') })
+    const loose = page.locator('.cdk-overlay-container [role="option"]').filter({ hasText: new RegExp(esc, 'i') })
+    const pick = (await opt.count()) ? opt : loose
+    if (!(await pick.count())) {
+      await clearFlowOverlays(page)
+      throw new Error(`The character "${n}" isn't in Flow yet.`)
+    }
+    // One click adds it to the prompt (a chip with its picture appears).
+    await pick.first().click()
+    for (let i = 0; i < 10 && (await chips()) <= had; i++) await page.waitForTimeout(500)
+    if ((await chips()) <= had) {
+      const add = page.getByRole('button', { name: 'Add to prompt' })
+      if (await add.count()) await add.last().click({ timeout: 5000 }).catch(() => {})
+      await page.waitForTimeout(1200)
+    }
+    if ((await chips()) <= had) throw new Error(`Couldn't add "${n}" to the prompt in Flow.`)
+    attached.push(n)
+  }
+  await clearFlowOverlays(page)
+  return attached
+}
+
+// ==================================================================== ChatGPT
+//
+// Character reference pictures, made in the user's own ChatGPT (signed in
+// once in this same window): a new chat, the reference prompt, and the
+// finished "Generated image" read straight out of the page (it is a blob:
+// address, so it can only be fetched from inside the page).
+
+/** ChatGPT's image allowance is used up for now. */
+export class ImageLimitError extends Error {}
+
+export function chatgptImage(prompt, out) {
+  const run = busy.then(() => makeChatgptImage(prompt, out))
+  busy = run.catch(() => {})
+  return run
+}
+
+async function makeChatgptImage(prompt, out) {
+  await ensureChrome()
+  const b = await connect()
+  let page
+  try {
+    page = await b.contexts()[0].newPage()
+    await page.goto('https://chatgpt.com/', { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    await page.waitForTimeout(5000)
+    const loggedOut = await page.evaluate(() => [...document.querySelectorAll('button, a')].some((e) => /^\s*log in\s*$/i.test(e.textContent || '')))
+    if (loggedOut) throw new Error('Not signed in to ChatGPT in my window. Say "log in to ChatGPT" and sign in once.')
+    const box = page.locator('#prompt-textarea, div[contenteditable="true"]').first()
+    await box.click({ timeout: 20_000 })
+    await page.keyboard.insertText(prompt)
+    await page.keyboard.press('Enter')
+
+    const t0 = Date.now()
+    while (Date.now() - t0 < 6 * 60_000) {
+      await page.waitForTimeout(4000)
+      const st = await page.evaluate(() => {
+        const turn = [...document.querySelectorAll('[data-message-author-role="assistant"]')].pop()
+        const scope = turn?.closest('article, [data-testid^="conversation-turn"]') || document
+        const img = [...scope.querySelectorAll('img[alt^="Generated image"]')].pop()
+        return {
+          busy: !!document.querySelector('[data-testid="stop-button"]'),
+          ready: !!img && img.complete && img.naturalWidth >= 512,
+          said: (turn?.innerText || '').replace(/\s+/g, ' ').slice(0, 300),
+        }
+      })
+      if (st.ready && !st.busy) {
+        const data = await page.evaluate(async () => {
+          const img = [...document.querySelectorAll('img[alt^="Generated image"]')].pop()
+          const blob = await (await fetch(img.src)).blob()
+          const buf = new Uint8Array(await blob.arrayBuffer())
+          let s = ''
+          for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000))
+          return btoa(s)
+        })
+        writeFileSync(out, Buffer.from(data, 'base64'))
+        return { file: out, seconds: Math.round((Date.now() - t0) / 1000) }
+      }
+      if (!st.busy && /(limit|too many|try again (later|in)|come back)/i.test(st.said) && !st.ready) {
+        throw new ImageLimitError(`ChatGPT says: ${st.said.slice(0, 200)}`)
+      }
+      if (!st.busy && st.said && Date.now() - t0 > 60_000 && !st.ready && /can't|cannot|unable|not able|policy/i.test(st.said)) {
+        throw new Error(`ChatGPT says: ${st.said.slice(0, 200)}`)
+      }
+    }
+    throw new Error('ChatGPT took longer than 6 minutes to make the picture.')
+  } finally {
+    await page?.close().catch(() => {})
+    await b.close().catch(() => {})
+  }
+}
+
+/** Open ChatGPT in JARVIS's window so the user can sign in (once). */
+export async function openChatgptLogin() {
+  await ensureChrome({ show: true, url: 'https://chatgpt.com/auth/login' })
+  if (await up()) {
+    const b = await connect()
+    try {
+      const p = await b.contexts()[0].newPage()
+      await p.goto('https://chatgpt.com/auth/login').catch(() => {})
+      await p.bringToFront().catch(() => {})
+    } finally {
+      await b.close().catch(() => {})
+    }
   }
 }
