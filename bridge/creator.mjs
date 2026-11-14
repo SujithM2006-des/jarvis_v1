@@ -37,7 +37,7 @@ import {
   flowCharacterList,
   flowCredits,
   flowRememberTextCharacter,
-  openChatgptLogin,
+  chatgptSignIn,
   openGeminiLogin,
   planVideo,
 } from './geminiweb.mjs'
@@ -958,12 +958,12 @@ export function creatorServer() {
       ),
       tool(
         'chatgpt_login',
-        "Open ChatGPT in JARVIS's window so the user can sign in once (needed for character pictures). They type the password themselves.",
+        "Open ChatGPT in JARVIS's window so the user can sign in once (needed for character pictures). Google asks which account; they sign in themselves. Waits up to 5 minutes for it.",
         {},
         async () => {
           try {
-            await openChatgptLogin()
-            return text("ChatGPT's sign-in is open in my window.")
+            const ok = await chatgptSignIn()
+            return ok ? text('Signed in to ChatGPT in my window.') : failText('No ChatGPT sign-in within 5 minutes; it can be tried again.')
           } catch (err) {
             return failText(`Couldn't open ChatGPT: ${err.message}`)
           }

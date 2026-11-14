@@ -39,9 +39,72 @@ import { PROMPT_SOCIAL, socialServer } from './social.mjs'
 import { recordLimit, recordUsage, usageInfo } from './usage.mjs'
 import { noteClaudeLimit, providerLimits } from './limits.mjs'
 import { feedbackPrompt, recordFeedback } from './feedback.mjs'
+import { autoSetupKey, chatgptLogout, chatgptSignIn, chatgptSignedIn } from './geminiweb.mjs'
 
 /** Open sessions on Claude, any window: one is asked for the plan's usage. */
 const liveClaude = new Set()
+
+/** A quick call that only succeeds with a working key. */
+const KEY_CHECKS = {
+  gemini: (k) => fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', { headers: { 'x-goog-api-key': k }, signal: AbortSignal.timeout(15000) }),
+  groq: (k) => fetch('https://api.groq.com/openai/v1/models', { headers: { authorization: `Bearer ${k}` }, signal: AbortSignal.timeout(15000) }),
+  openrouter: (k) => fetch('https://openrouter.ai/api/v1/key', { headers: { authorization: `Bearer ${k}` }, signal: AbortSignal.timeout(15000) }),
+}
+
+/** Setup's automatic keys: how each one is going ({state, note}). */
+const keyJobs = { running: false, jobs: {} }
+
+/** ChatGPT's sign-in in JARVIS's window, as last checked (null: not known yet). */
+let chatgptConnected = null
+let chatgptChecking = null
+const checkChatgpt = () =>
+  (chatgptChecking ??= chatgptSignedIn()
+    .then((v) => {
+      if (v !== null) chatgptConnected = v
+      return chatgptConnected
+    })
+    .finally(() => (chatgptChecking = null)))
+
+async function runKeyJobs(providers) {
+  keyJobs.running = true
+  keyJobs.jobs = Object.fromEntries(providers.map((p) => [p, { state: 'waiting', note: 'Waiting…' }]))
+  let changed = false
+  for (const p of providers) {
+    const job = keyJobs.jobs[p]
+    job.state = 'working'
+    job.note = 'Opening the sign-in…'
+    // ChatGPT has no key to fetch: the user signs in in JARVIS's window.
+    if (p === 'chatgpt') {
+      try {
+        job.note = 'Sign in to ChatGPT in the window — Google will ask which account.'
+        chatgptConnected = await chatgptSignIn()
+        if (!chatgptConnected) throw new Error('Not signed in to ChatGPT within 5 minutes.')
+        job.state = 'done'
+        job.note = 'Connected'
+      } catch (err) {
+        job.state = 'failed'
+        job.note = String(err.message).split('\n')[0].slice(0, 200)
+      }
+      continue
+    }
+    try {
+      const key = await autoSetupKey(p, (note) => (job.note = note))
+      job.note = 'Checking the key…'
+      const r = await KEY_CHECKS[p](key)
+      if (!r.ok) throw new Error(`the key didn't work (HTTP ${r.status})`)
+      changed = saveKeys({ [p]: key }) || changed
+      job.state = 'done'
+      job.note = `Key added (••••${key.slice(-4)})`
+      console.log(`[jarvis] ${p} key set up automatically`)
+    } catch (err) {
+      job.state = 'failed'
+      job.note = String(err.message).split('\n')[0].slice(0, 200)
+      console.log(`[jarvis] automatic ${p} key failed: ${job.note}`)
+    }
+  }
+  if (changed) await startProxy({ force: true }).catch(() => {})
+  keyJobs.running = false
+}
 
 // A reel takes minutes (images, voices, ffmpeg); let tool calls run that long.
 process.env.MCP_TOOL_TIMEOUT ??= String(20 * 60_000)
@@ -1307,6 +1370,49 @@ const handleRequest = async (req, res) => {
     if (changed) await startProxy()
     res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8' })
     return res.end(JSON.stringify({ keys: maskedKeys(), ...brainsInfo() }))
+  }
+  // Keys set up for the user (setup's "Sign in with Google"): JARVIS gets each
+  // key in his own window after the user signs in, checks it, and saves it.
+  // POST starts it in the background; GET reports how each one is going.
+  if (req.method === 'POST' && req.url === '/keys/auto') {
+    const body = await readJson(req)
+    const wanted = (Array.isArray(body.providers) ? body.providers : ['gemini', 'groq', 'openrouter']).filter((p) => KEY_CHECKS[p] || p === 'chatgpt')
+    if (!keyJobs.running) void runKeyJobs(wanted)
+    res.writeHead(202, { ...cors, 'content-type': 'application/json; charset=utf-8' })
+    return res.end(JSON.stringify(keyJobs))
+  }
+  if (req.method === 'GET' && req.url === '/keys/auto') {
+    res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    return res.end(JSON.stringify({ ...keyJobs, keys: maskedKeys() }))
+  }
+  // Disconnect ChatGPT: sign JARVIS's window out of it (to switch accounts).
+  if (req.method === 'POST' && req.url === '/accounts/chatgpt/logout') {
+    let ok = false
+    try {
+      ok = await chatgptLogout()
+      chatgptConnected = false
+    } catch (err) {
+      console.log(`[jarvis] ChatGPT sign-out failed: ${err.message}`)
+    }
+    res.writeHead(ok ? 200 : 500, { ...cors, 'content-type': 'application/json; charset=utf-8' })
+    return res.end(JSON.stringify({ ok }))
+  }
+  // Setup's account list: which services are connected (no keys shown).
+  // ?check=1 also looks at ChatGPT's sign-in in JARVIS's window (a few seconds).
+  if (req.method === 'GET' && req.url.startsWith('/accounts')) {
+    if (req.url.includes('check=1') && !keyJobs.running) await Promise.race([checkChatgpt(), new Promise((r) => setTimeout(r, 15000))])
+    const k = maskedKeys()
+    res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    return res.end(
+      JSON.stringify({
+        gemini: { connected: Boolean(k.gemini) },
+        groq: { connected: Boolean(k.groq) },
+        openrouter: { connected: Boolean(k.openrouter) },
+        chatgpt: { connected: chatgptConnected },
+        running: keyJobs.running,
+        jobs: keyJobs.jobs,
+      }),
+    )
   }
   if (req.method === 'GET' && req.url === '/profile') {
     res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })

@@ -240,3 +240,69 @@ html[data-theme-hue] #root .vg-cal-error { filter: hue-rotate(calc(-1 * var(--th
 .su-key input:focus { border-color: #3fb6ff; box-shadow: 0 0 0 3px rgba(63, 182, 255, 0.18); }
 .su-key .su-key-x { height: 32px; padding: 0 12px; font-size: 13px; }
 @media (max-width: 560px) { .su-key { grid-template-columns: 1fr; } }
+/* "Sign in with Google — set up the keys for me" */
+.su-autokeys { display: grid; gap: 6px; margin: 10px 0 12px; }
+.su-google {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  justify-self: start;
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: #fff;
+  color: #1f1f1f;
+  font: 600 14px 'Inter', 'Segoe UI', sans-serif;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.su-google:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35); }
+.su-google:disabled { opacity: 0.7; cursor: progress; }
+.su-autokeys-list { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 12.5px; }
+.su-autokeys-list li { display: flex; gap: 10px; }
+.su-autokeys-list b { min-width: 86px; }
+.su-ak-working span, .su-ak-waiting span { opacity: 0.8; }
+.su-ak-done span { color: #4ee6a8; }
+.su-ak-failed span { color: #ff8a94; }
+
+/* AI accounts: one row each — Sign in, or ✓ Connected. */
+.su-accounts { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.su-accounts li {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(63, 182, 255, 0.25);
+  background: rgba(4, 18, 40, 0.6);
+}
+.su-accounts li.su-acc-on { border-color: rgba(78, 230, 168, 0.35); }
+.su-acc-name { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.su-acc-name b { font-size: 14px; }
+.su-acc-name small { opacity: 0.7; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.su-acc-done { display: inline-flex; align-items: center; gap: 12px; }
+.su-acc-ok { color: #4ee6a8; font-weight: 600; font-size: 13px; }
+.su-acc-off {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  opacity: 0.55;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.su-acc-off:hover { opacity: 0.9; }
+.su-acc-wait { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; opacity: 0.85; }
+.su-acc-wait i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(63, 182, 255, 0.3);
+  border-top-color: #3fb6ff;
+  animation: su-spin 0.9s linear infinite;
+}
+@keyframes su-spin { to { transform: rotate(360deg); } }
+.su-accounts .su-google { padding: 7px 14px; font-size: 13px; }

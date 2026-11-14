@@ -775,17 +775,319 @@ async function makeChatgptImage(prompt, out) {
   }
 }
 
-/** Open ChatGPT in JARVIS's window so the user can sign in (once). */
-export async function openChatgptLogin() {
-  await ensureChrome({ show: true, url: 'https://chatgpt.com/auth/login' })
-  if (await up()) {
+/**
+ * Is ChatGPT signed in, in JARVIS's window? Told from its sign-in cookie
+ * (__Secure-next-auth.session-token), so nothing is opened or shown — opening a
+ * tab to look kept snatching the window while the user was signing in.
+ * true / false; null if the window isn't running.
+ */
+export async function chatgptSignedIn() {
+  if (!(await up())) return null
+  const b = await connect()
+  try {
+    const now = Date.now() / 1000
+    const cookies = await b.contexts()[0].cookies('https://chatgpt.com')
+    return cookies.some((c) => c.name.startsWith('__Secure-next-auth.session-token') && c.value && (c.expires <= 0 || c.expires > now))
+  } catch {
+    return null
+  } finally {
+    await b.close().catch(() => {})
+  }
+}
+
+/**
+ * Google's account chooser, every time: a site's "Continue with Google" (and
+ * Google's own sign-in) gets prompt=select_account, so Google lists the
+ * accounts in this window (and "Use another account") instead of quietly
+ * signing in with the one used last. Returns a function that stops it.
+ */
+const GOOGLE_AUTH = /^https:\/\/accounts\.google\.com\/(o\/oauth2\/(v\d\/)?auth|signin\/oauth\/?(\?|$)|ServiceLogin)/
+async function forceAccountChooser(ctx) {
+  const handler = (route) => {
+    const req = route.request()
+    if (!req.isNavigationRequest()) return route.continue()
+    const u = new URL(req.url())
+    const prompt = (u.searchParams.get('prompt') || '').split(/\s+/).filter(Boolean)
+    if (prompt.includes('select_account')) return route.continue()
+    u.searchParams.set('prompt', ['select_account', ...prompt.filter((x) => x !== 'none')].join(' '))
+    return route.continue({ url: u.toString() })
+  }
+  await ctx.route(GOOGLE_AUTH, handler).catch(() => {})
+  return () => ctx.unroute(GOOGLE_AUTH, handler).catch(() => {})
+}
+
+/** Google's own account chooser, then on to `next`. */
+const chooserThen = (next) => `https://accounts.google.com/AccountChooser?continue=${encodeURIComponent(next)}`
+
+/**
+ * ChatGPT sign-in in JARVIS's window: one tab, Google's account chooser
+ * forced, and the tab left alone (the cookie is watched, nothing reloads)
+ * until signed in or `timeoutMs` passes. Returns true when signed in.
+ */
+export function chatgptSignIn(timeoutMs = 5 * 60_000) {
+  const run = busy.then(async () => {
+    await ensureChrome({ show: true, url: 'about:blank' })
     const b = await connect()
+    let stop = () => {}
     try {
-      const p = await b.contexts()[0].newPage()
-      await p.goto('https://chatgpt.com/auth/login').catch(() => {})
+      const ctx = b.contexts()[0]
+      stop = await forceAccountChooser(ctx)
+      let p = ctx.pages().find((x) => /chatgpt\.com|auth\.openai\.com/.test(x.url()))
+      if (!p) p = ctx.pages().find((x) => x.url() === 'about:blank') ?? (await ctx.newPage())
+      if (!/chatgpt\.com\/auth|auth\.openai\.com/.test(p.url())) await p.goto('https://chatgpt.com/auth/login', { waitUntil: 'domcontentloaded' }).catch(() => {})
+      const cdp = await ctx.newCDPSession(p).catch(() => null)
+      if (cdp) {
+        const { windowId } = await cdp.send('Browser.getWindowForTarget').catch(() => ({}))
+        if (windowId) await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } }).catch(() => {})
+      }
       await p.bringToFront().catch(() => {})
+      const until = Date.now() + timeoutMs
+      const now = () => Date.now() / 1000
+      while (Date.now() < until) {
+        const cookies = await ctx.cookies('https://chatgpt.com').catch(() => [])
+        if (cookies.some((c) => c.name.startsWith('__Secure-next-auth.session-token') && c.value && (c.expires <= 0 || c.expires > now()))) return true
+        await new Promise((r) => setTimeout(r, 3000))
+      }
+      return false
     } finally {
+      await stop()
       await b.close().catch(() => {})
     }
+  })
+  busy = run.catch(() => {})
+  return run
+}
+
+/**
+ * Sign JARVIS's window out of ChatGPT (to switch accounts): its cookies and
+ * saved site data are cleared, so the next sign-in starts fresh. Other sites
+ * (Google, Flow) keep their sign-ins.
+ */
+export async function chatgptLogout() {
+  await ensureChrome()
+  const b = await connect()
+  let page
+  try {
+    const ctx = b.contexts()[0]
+    page = await ctx.newPage()
+    await page.goto('https://chatgpt.com/', { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {})
+    // The site's own storage, while on it.
+    await page.evaluate(() => {
+      try {
+        localStorage.clear()
+        sessionStorage.clear()
+      } catch {
+        /* nothing stored */
+      }
+    }).catch(() => {})
+    await ctx.clearCookies({ domain: /(^|\.)(chatgpt\.com|openai\.com|oaistatic\.com|oaiusercontent\.com)$/ })
+    await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {})
+    await page.waitForTimeout(4000)
+    return await page.evaluate(() => [...document.querySelectorAll('button, a')].some((e) => /^\s*log in\s*$/i.test(e.textContent || '')))
+  } finally {
+    await page?.close().catch(() => {})
+    await b.close().catch(() => {})
+  }
+}
+
+/** Open ChatGPT in JARVIS's window so the user can sign in (once). */
+export async function openChatgptLogin() {
+  const url = 'https://chatgpt.com/auth/login'
+  await ensureChrome({ show: true, url })
+  const b = await connect()
+  try {
+    const ctx = b.contexts()[0]
+    // One ChatGPT tab only: the one Chrome just opened, or one already there.
+    let p = ctx.pages().find((x) => /chatgpt\.com|auth\.openai\.com/.test(x.url()))
+    if (!p) {
+      p = await ctx.newPage()
+      await p.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {})
+    }
+    // Up front and not minimised, so it can be signed in to.
+    const cdp = await ctx.newCDPSession(p).catch(() => null)
+    if (cdp) {
+      const { windowId } = await cdp.send('Browser.getWindowForTarget').catch(() => ({}))
+      if (windowId) await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } }).catch(() => {})
+    }
+    await p.bringToFront().catch(() => {})
+  } finally {
+    await b.close().catch(() => {})
+  }
+}
+
+// ============================================================== API keys, set up for the user
+//
+// Setup's "Sign in with Google": instead of making and pasting API keys, the
+// user signs in (Google, or "Continue with Google" on Groq / OpenRouter) in
+// JARVIS's window and JARVIS gets the key himself — an existing one is copied
+// (a key in a project called "jarvis" first), or a new one named "Jarvis" is
+// created. The key is read from the page (or the clipboard, which the window
+// is allowed to read on these sites only) and handed back to be saved.
+
+const KEY_SITES = {
+  gemini: {
+    label: 'Gemini',
+    url: 'https://aistudio.google.com/api-keys',
+    origin: 'https://aistudio.google.com',
+    key: /\b(AQ\.[A-Za-z0-9_-]{30,}|AIza[0-9A-Za-z_-]{30,})/,
+    // The site itself, not just its name somewhere in the address (Google's
+    // account chooser carries it as where to continue to).
+    signedIn: (u) => hostOf(u) === 'aistudio.google.com',
+  },
+  groq: {
+    label: 'Groq',
+    url: 'https://console.groq.com/keys',
+    origin: 'https://console.groq.com',
+    key: /\bgsk_[0-9A-Za-z]{30,}/,
+    signedIn: (u) => hostOf(u) === 'console.groq.com' && /^\/keys/.test(pathOf(u)),
+  },
+  openrouter: {
+    label: 'OpenRouter',
+    url: 'https://openrouter.ai/settings/keys',
+    origin: 'https://openrouter.ai',
+    key: /\bsk-or-v1-[0-9a-f]{40,}/,
+    signedIn: (u) => hostOf(u) === 'openrouter.ai' && /^\/(settings\/keys|workspace)/.test(pathOf(u)),
+  },
+}
+
+function hostOf(u) {
+  try {
+    return new URL(u).hostname
+  } catch {
+    return ''
+  }
+}
+function pathOf(u) {
+  try {
+    return new URL(u).pathname
+  } catch {
+    return ''
+  }
+}
+
+/** A key found anywhere on the page: text, inputs, code blocks. */
+const keyOnPage = (page, re) =>
+  page.evaluate((src) => {
+    const re = new RegExp(src)
+    const texts = [document.body.innerText, ...[...document.querySelectorAll('input, textarea')].map((i) => i.value)]
+    for (const t of texts) {
+      const m = re.exec(t || '')
+      if (m && !/[•…*]/.test(m[0])) return m[0]
+    }
+    return null
+  }, re.source)
+
+/** A visible button or link by its name — its text, or its label when it is only an icon (OpenRouter's Google button). */
+const visibleButton = (page, name) =>
+  page
+    .getByRole('button', { name })
+    .or(page.getByRole('link', { name }))
+    .or(page.locator('button, [role="button"], a').filter({ hasText: name }))
+    .filter({ visible: true })
+
+/**
+ * Get an API key for `provider` ('gemini' | 'groq' | 'openrouter') through the
+ * user's own account in JARVIS's window. `say(text)` reports progress.
+ * Waits up to 5 minutes for a sign-in. Returns the key.
+ */
+export function autoSetupKey(provider, say = () => {}) {
+  const run = busy.then(() => getKey(provider, say))
+  busy = run.catch(() => {})
+  return run
+}
+
+async function getKey(provider, say) {
+  const site = KEY_SITES[provider]
+  if (!site) throw new Error(`Unknown service ${provider}.`)
+  await ensureChrome({ show: true, url: 'about:blank' })
+  const b = await connect()
+  let page
+  // Google always asks which account (never quietly the last one).
+  let stopChooser = () => {}
+  try {
+    const ctx = b.contexts()[0]
+    stopChooser = await forceAccountChooser(ctx)
+    await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: site.origin }).catch(() => {})
+    page = ctx.pages().find((x) => x.url() === 'about:blank') ?? (await ctx.newPage())
+    // Gemini is Google itself: start at Google's account chooser.
+    await page.goto(provider === 'gemini' ? chooserThen(site.url) : site.url, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    await page.bringToFront().catch(() => {})
+    if (provider === 'gemini') say('Choose your Google account in the window.')
+    await page.waitForTimeout(5000)
+
+    // Sign in: "Continue with Google" is pressed for them; they pick the account.
+    let pressed = false
+    const until = Date.now() + 5 * 60_000
+    while (Date.now() < until) {
+      const url = page.url()
+      const loginButton = visibleButton(page, /Continue with Google/i)
+      if (site.signedIn(url) && !(await loginButton.count())) break
+      if (!pressed && (await loginButton.count())) {
+        say(`Signing in to ${site.label} with Google — choose your Google account in the window.`)
+        await loginButton.first().click().catch(() => {})
+        pressed = true
+      } else if (/accounts\.google\.com/.test(url)) {
+        say(`Choose your Google account (or sign in) in the window for ${site.label}.`)
+      }
+      await page.waitForTimeout(2500)
+      // After sign-in some sites land elsewhere: go back to the keys page.
+      if (pressed && !/accounts\.google\.com|sign-?in|login/i.test(page.url()) && !site.signedIn(page.url())) {
+        await page.goto(site.url, { waitUntil: 'domcontentloaded' }).catch(() => {})
+        await page.waitForTimeout(4000)
+      }
+    }
+    if (!site.signedIn(page.url())) throw new Error(`Not signed in to ${site.label} within 5 minutes.`)
+    await page.waitForTimeout(3000)
+    say(`Signed in to ${site.label}. Getting the key…`)
+
+    // Gemini: copy an existing key (one in a "jarvis" project first).
+    if (provider === 'gemini') {
+      const rows = page.locator('tr, [role="row"]').filter({ has: page.getByRole('button', { name: 'Copy API key' }) })
+      if (await rows.count()) {
+        const mine = rows.filter({ hasText: /\bjarvis\b/i })
+        const row = (await mine.count()) ? mine.first() : rows.first()
+        await row.getByRole('button', { name: 'Copy API key' }).click()
+        await page.waitForTimeout(1200)
+        const got = (await page.evaluate(() => navigator.clipboard.readText()).catch(() => '')).trim()
+        if (site.key.test(got)) return got
+      }
+    }
+
+    // Otherwise create a new one named "Jarvis".
+    say(`Creating a ${site.label} key named "Jarvis"…`)
+    const create = visibleButton(page, /create (api )?key|new key/i)
+    await create.first().click({ timeout: 15_000 })
+    await page.waitForTimeout(2000)
+    // A name box, if it asks for one.
+    const nameBox = page.locator('[role="dialog"] input[type="text"], [role="dialog"] input:not([type]), input[placeholder*="name" i]').filter({ visible: true })
+    if (await nameBox.count()) await nameBox.first().fill('Jarvis').catch(() => {})
+    // The dialog's confirm button (Gemini may also ask which project: a new one is fine).
+    for (const name of [/create api key in new project/i, /^\s*(create( key| api key)?|submit|save)\s*$/i]) {
+      const btn = page.locator('[role="dialog"] button, [role="dialog"] [role="button"], .cdk-overlay-container button, form button').filter({ hasText: name }).filter({ visible: true })
+      if (await btn.count()) {
+        await btn.last().click().catch(() => {})
+        await page.waitForTimeout(2500)
+      }
+    }
+    // The key is shown once: read it from the page, or copy it.
+    for (let i = 0; i < 20; i++) {
+      const found = await keyOnPage(page, site.key)
+      if (found) return found
+      const copy = page.locator('[role="dialog"] button, .cdk-overlay-container button').filter({ hasText: /copy/i }).filter({ visible: true })
+      const copyIcon = page.locator('[role="dialog"] [aria-label*="Copy" i], .cdk-overlay-container [aria-label*="Copy" i]').filter({ visible: true })
+      const btn = (await copy.count()) ? copy : copyIcon
+      if (await btn.count()) {
+        await btn.first().click().catch(() => {})
+        await page.waitForTimeout(800)
+        const got = (await page.evaluate(() => navigator.clipboard.readText()).catch(() => '')).trim()
+        if (site.key.test(got)) return got.match(site.key)[0]
+      }
+      await page.waitForTimeout(1500)
+    }
+    throw new Error(`Made the ${site.label} key but couldn't read it from the page — copy it from the window and paste it into setup.`)
+  } finally {
+    await stopChooser()
+    await page?.close().catch(() => {})
+    await b.close().catch(() => {})
   }
 }
