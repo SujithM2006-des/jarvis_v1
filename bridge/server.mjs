@@ -1413,7 +1413,11 @@ const handleRequest = async (req, res) => {
   // The popup's mic button: listen now, or — if already listening — standby.
   // Tapped while muted, it unmutes first: that is plainly what is wanted.
   if (req.method === 'POST' && req.url === '/popup/mic') {
-    if (muted) setMuted(false)
+    // A tap while muted stays muted: holding the mic is what unmutes it.
+    if (muted) {
+      res.writeHead(200, { ...cors, 'content-type': 'application/json; charset=utf-8' })
+      return res.end(JSON.stringify({ sent: 0, muted: true }))
+    }
     // Offline: the window's recogniser (Chrome's) cannot hear without the
     // internet, so the wake listener hears the command instead, with Vosk —
     // it beeps, listens and sends what it heard as a request.

@@ -143,28 +143,19 @@ $xamlText = @'
                 Foreground="#A8D4FF" Background="Transparent" BorderThickness="0" Cursor="Hand" ToolTip="Remove the attachments"/>
       </Grid>
       <Grid Grid.Row="3" Margin="0,8,0,0">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <Button x:Name="Circle" Grid.Column="0" Content="◯" Width="34" Height="32" FontSize="15" Margin="0,0,8,0"
                 Foreground="#3FB6FF" Background="#223FB6FF" BorderBrush="#553FB6FF" Cursor="Hand" ToolTip="Circle to search"/>
+        <!-- One mic for everything: tap = listen / standby; hold = mute / unmute (red while muted). -->
         <Button x:Name="Mic" Grid.Column="1" Content="&#xE720;" FontFamily="Segoe MDL2 Assets" Width="34" Height="32" FontSize="15" Margin="0,0,8,0"
                 Foreground="#3FB6FF" Background="#223FB6FF" BorderBrush="#553FB6FF" Cursor="Hand"
-                ToolTip="Talk to JARVIS (tap again to put him on standby)"/>
-        <!-- Mute: a microphone with a slash; red while muted. -->
-        <Button x:Name="Mute" Grid.Column="2" Width="34" Height="32" Margin="0,0,8,0"
-                Background="#223FB6FF" BorderBrush="#553FB6FF" Cursor="Hand" ToolTip="Mute the microphone">
-          <Grid>
-            <TextBlock x:Name="MuteGlyph" Text="&#xE720;" FontFamily="Segoe MDL2 Assets" FontSize="15" Foreground="#3FB6FF"
-                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            <Line x:Name="MuteSlash" X1="0" Y1="0" X2="16" Y2="16" Stroke="#3FB6FF" StrokeThickness="2"
-                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
-          </Grid>
-        </Button>
-        <Button x:Name="Attach" Grid.Column="3" Content="&#xE723;" FontFamily="Segoe MDL2 Assets" Width="34" Height="32" FontSize="15" Margin="0,0,8,0"
+                ToolTip="Tap: talk to JARVIS (tap again for standby). Hold: mute or unmute the microphone."/>
+        <Button x:Name="Attach" Grid.Column="2" Content="&#xE723;" FontFamily="Segoe MDL2 Assets" Width="34" Height="32" FontSize="15" Margin="0,0,8,0"
                 Foreground="#3FB6FF" Background="#223FB6FF" BorderBrush="#553FB6FF" Cursor="Hand"
                 ToolTip="Attach documents or images (or drop them here, or paste with Ctrl+V)"/>
-        <TextBox x:Name="Input" Grid.Column="4" Height="32" Padding="8,6" FontFamily="Segoe UI" FontSize="13"
+        <TextBox x:Name="Input" Grid.Column="3" Height="32" Padding="8,6" FontFamily="Segoe UI" FontSize="13"
                  Foreground="#E9F3FF" CaretBrush="#3FB6FF" Background="#14FFFFFF" BorderBrush="#333FB6FF"/>
-        <Button x:Name="Send" Grid.Column="5" Content="➤" Width="34" Height="32" FontSize="14" Margin="8,0,0,0"
+        <Button x:Name="Send" Grid.Column="4" Content="➤" Width="34" Height="32" FontSize="14" Margin="8,0,0,0"
                 Foreground="#02132B" Background="#3FB6FF" BorderThickness="0" Cursor="Hand" ToolTip="Send"/>
       </Grid>
     </Grid>
@@ -177,7 +168,7 @@ $xamlText = $xamlText.Replace('J.A.R.V.I.S.', [Security.SecurityElement]::Escape
 
 $win = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
 $el = @{}
-foreach ($n in 'Header', 'Dot', 'Status', 'Close', 'Scroll', 'Heard', 'Said', 'Circle', 'Mic', 'Mute', 'MuteGlyph', 'MuteSlash', 'Attach', 'AttachRow', 'AttachList', 'AttachClear', 'Input', 'Send', 'Panel', 'Notch', 'NotchDot', 'Line', 'LineBar') { $el[$n] = $win.FindName($n) }
+foreach ($n in 'Header', 'Dot', 'Status', 'Close', 'Scroll', 'Heard', 'Said', 'Circle', 'Mic', 'Attach', 'AttachRow', 'AttachList', 'AttachClear', 'Input', 'Send', 'Panel', 'Notch', 'NotchDot', 'Line', 'LineBar') { $el[$n] = $win.FindName($n) }
 $brush = { param($hex) (New-Object System.Windows.Media.BrushConverter).ConvertFromString((Turn-Colour $hex)) }
 $micIdle = & $brush '#223FB6FF'
 $micLive = & $brush '#3FB6FF'
@@ -506,15 +497,26 @@ function Send-Input {
 $el.Send.Add_Click({ Send-Input })
 $el.Input.Add_KeyDown({ if ($_.Key -eq 'Return') { Send-Input } })
 $el.Circle.Add_Click({ Post '/circle' $null | Out-Null })
-# Mic: listen now (like "Hey Jarvis"); tapped while listening, standby.
-# Mute: the microphone off for JARVIS (this window and the background "Hey
-# Jarvis" listener) until tapped again. The mic button also unmutes.
+# The one mic button:
+#   tap  - listen now (like "Hey Jarvis"); tapped while listening, standby.
+#   hold - (about 0.7 s) mute the microphone for JARVIS (this window and the
+#          background "Hey Jarvis" listener); held again, unmute. Red while muted.
 $muteOn = & $brush '#E0465A'
 $muteFg = & $brush '#02132B'
-$el.Mute.Add_Click({
+$script:micHeld = $false
+$holdTimer = New-Object System.Windows.Threading.DispatcherTimer
+$holdTimer.Interval = [TimeSpan]::FromMilliseconds(700)
+$holdTimer.Add_Tick({
+  $holdTimer.Stop()
+  $script:micHeld = $true
   if (-not (Post '/popup/mute' $null)) { $el.Status.Text = "  ·  $($script:assistant) is not running" }
 })
+$el.Mic.Add_PreviewMouseLeftButtonDown({ $script:micHeld = $false; $holdTimer.Start() })
+$el.Mic.Add_PreviewMouseLeftButtonUp({ $holdTimer.Stop() })
+$el.Mic.Add_MouseLeave({ $holdTimer.Stop() })
 $el.Mic.Add_Click({
+  # The press that muted or unmuted isn't also a tap.
+  if ($script:micHeld) { $script:micHeld = $false; return }
   if (Post '/popup/mic' $null) { return }
   if (PopupMode) { Start-Jarvis ''; $el.Status.Text = "  ·  starting $($script:assistant)…" }
   else { $el.Status.Text = "  ·  $($script:assistant) is not running" }
@@ -588,15 +590,12 @@ $timer.Add_Tick({
     }
     # The mic button lights up while he is listening.
     $live = $s.phase -in 'listening', 'waking'
-    $el.Mic.Background = if ($live) { $micLive } else { $micIdle }
-    $el.Mic.Foreground = if ($live) { $micLiveFg } else { $micIdleFg }
-    # The mute button turns red while muted, and the status says so.
+    # The mic is red while muted (and the status says so), lit while listening.
     $isMuted = [bool]$s.muted
-    $el.Mute.Background = if ($isMuted) { $muteOn } else { $micIdle }
-    $fg = if ($isMuted) { $muteFg } else { $micIdleFg }
-    $el.MuteGlyph.Foreground = $fg; $el.MuteSlash.Stroke = $fg
-    $el.Mute.ToolTip = if ($isMuted) { 'Unmute the microphone' } else { 'Mute the microphone' }
-    if ($isMuted) { $el.Status.Text = '  ·  muted' }
+    $el.Mic.Background = if ($isMuted) { $muteOn } elseif ($live) { $micLive } else { $micIdle }
+    $el.Mic.Foreground = if ($isMuted) { $muteFg } elseif ($live) { $micLiveFg } else { $micIdleFg }
+    $el.Mic.ToolTip = if ($isMuted) { 'Muted. Hold to unmute.' } else { 'Tap: talk to JARVIS (tap again for standby). Hold: mute the microphone.' }
+    if ($isMuted) { $el.Status.Text = '  ·  muted (hold the mic to unmute)' }
     $key = "$($s.heard)|$($s.said)"
     if ($key -ne $last) {
       $last = $key

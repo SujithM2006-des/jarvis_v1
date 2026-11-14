@@ -454,6 +454,16 @@ export function retryAnswer(userTurnId: string, request: string) {
   return ask(`[Retry] ${request}`)
 }
 
+/** The user's past requests, oldest first (for ↑/↓ in the text box). */
+export function usePromptHistory(): string[] {
+  return useStore((s) => s.promptHistory)
+}
+
+/** Stop the answer being made in the session on screen (voice, generation, tokens). */
+export function stopAnswer() {
+  window.dispatchEvent(new Event('jarvis-stop'))
+}
+
 /** Read a written answer aloud (code blocks skipped); stop with stopReading(). */
 export function readAloud(text: string) {
   window.dispatchEvent(new CustomEvent('jarvis-read', { detail: text }))

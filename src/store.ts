@@ -274,6 +274,8 @@ type State = {
   setSessionBusy: (id: string, busy: boolean) => void
   /** Chat view on or off for a session (default: the one on screen). */
   setChat: (on: boolean, id?: string) => void
+  /** Every request the user made (typed, spoken, from the popup), oldest first: ↑/↓ in the box. */
+  promptHistory: string[]
   /** Thumbs up/down (or none) on a turn of the session on screen. */
   setFeedback: (turnId: string, vote: 'up' | 'down' | null) => void
   /** Remove a turn and everything after it from the session on screen (retry). */
@@ -349,6 +351,23 @@ function loadSessions(): { sessions: Session[]; activeSession: string } {
 }
 
 const initialSessions = loadSessions()
+
+const HISTORY_KEY = 'jarvis-prompt-history'
+/** The ↑/↓ request history, kept in this browser (or rebuilt from the sessions). */
+function loadPromptHistory(): string[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? 'null')
+    if (Array.isArray(saved)) return saved.filter((x) => typeof x === 'string').slice(-200)
+  } catch {
+    /* storage unavailable */
+  }
+  return initialSessions.sessions
+    .slice()
+    .sort((a, b) => a.at - b.at)
+    .flatMap((x) => x.turns.filter((t) => t.role === 'user').map((t) => t.text.trim()))
+    .filter(Boolean)
+    .slice(-200)
+}
 
 export const useStore = create<State>((set, get) => ({
   phase: 'offline',
@@ -433,16 +452,21 @@ export const useStore = create<State>((set, get) => ({
   setActiveTool: (activeTool) => set({ activeTool }),
   setError: (error) => set({ error }),
   setConnected: (connected) => set({ connected }),
+  promptHistory: loadPromptHistory(),
   pushTurn: (turn, sid) =>
-    set((s) =>
-      inSession(s, sid ?? s.activeSession, (x) => ({
+    set((s) => ({
+      // The user's requests also go into the ↑/↓ history (a repeat once).
+      ...(turn.role === 'user' && turn.text.trim() && s.promptHistory[s.promptHistory.length - 1] !== turn.text.trim()
+        ? { promptHistory: [...s.promptHistory, turn.text.trim()].slice(-200) }
+        : {}),
+      ...inSession(s, sid ?? s.activeSession, (x) => ({
         ...x,
         // A session is named after its first request.
         title: x.title.startsWith(NEW_TITLE) && !x.turns.length && turn.role === 'user' ? titleFrom(turn.text) : x.title,
         turns: [...x.turns.slice(-40), turn],
         at: Date.now(),
       })),
-    ),
+    })),
   appendToLastTurn: (text, sid) =>
     set((s) =>
       inSession(s, sid ?? s.activeSession, (x) => {
@@ -603,7 +627,16 @@ if (import.meta.env.DEV) {
 if (typeof window !== 'undefined') {
   let saveTimer = 0
   let lastSaved: unknown = null
+  let lastHistory: unknown = null
   useStore.subscribe((s) => {
+    if (s.promptHistory !== lastHistory) {
+      lastHistory = s.promptHistory
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(s.promptHistory))
+      } catch {
+        /* storage full or blocked */
+      }
+    }
     if (s.sessions === lastSaved) return
     lastSaved = s.sessions
     window.clearTimeout(saveTimer)

@@ -32,6 +32,8 @@ import {
   useSessionBusy,
   rateAnswer,
   retryAnswer,
+  stopAnswer,
+  usePromptHistory,
   readAloud,
   stopReading,
   type Turn,
@@ -1071,6 +1073,71 @@ function ModelUsage({ i }: { i: number }) {
   )
 }
 
+/**
+ * The one mic button (the same in the popup):
+ *   tap  — listen; tapped again while listening, standby.
+ *   hold — (0.7 s, a ring fills) mute the microphone; held again, unmute.
+ * Red with a slash while muted. Keyboard: Enter/Space tap; Shift+Enter mutes.
+ */
+const HOLD_MS = 700
+function MicButton({ muted, listening }: { muted: boolean; listening: boolean }) {
+  const timer = useRef(0)
+  const held = useRef(false)
+  const [holding, setHolding] = useState(false)
+  const stop = () => {
+    window.clearTimeout(timer.current)
+    setHolding(false)
+  }
+  return (
+    <button
+      type="button"
+      className={`vg-mic ${muted ? 'vg-muted' : ''} ${holding ? 'vg-holding' : ''}`}
+      title={
+        muted
+          ? 'Microphone muted — hold to unmute'
+          : `${listening ? 'Tap: stand by' : 'Tap: talk to JARVIS'} · Hold: mute the microphone`
+      }
+      aria-label={muted ? 'Microphone muted. Hold to unmute.' : listening ? 'Stand by (hold to mute)' : 'Talk (hold to mute)'}
+      aria-pressed={muted}
+      style={{ '--hold': `${HOLD_MS}ms` } as CSSProperties}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return
+        held.current = false
+        setHolding(true)
+        window.clearTimeout(timer.current)
+        timer.current = window.setTimeout(() => {
+          held.current = true
+          setHolding(false)
+          void mute(!muted)
+        }, HOLD_MS)
+      }}
+      onPointerUp={stop}
+      onPointerLeave={stop}
+      onPointerCancel={stop}
+      onContextMenu={(e) => e.preventDefault()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && e.shiftKey) {
+          e.preventDefault()
+          void mute(!muted)
+        }
+      }}
+      onClick={() => {
+        // The press that muted or unmuted is not also a tap.
+        if (held.current) {
+          held.current = false
+          return
+        }
+        void listen()
+      }}
+    >
+      <Icon size={20}>
+        {I.mic}
+        {muted && <path d="M4 4l16 16" />}
+      </Icon>
+    </button>
+  )
+}
+
 /** The model dropdown, left of the text box: Auto, or one AI to think with. */
 function BrainPick() {
   const b = useBrains()
@@ -1092,6 +1159,17 @@ function BrainPick() {
 }
 function AskBar() {
   const { phase, level, caption, error } = useJarvis()
+  // Making or speaking an answer in the session on screen: Stop shows (and Esc stops).
+  const sessionBusy = useSessionBusy()
+  const working = sessionBusy || phase === 'thinking' || phase === 'tooling' || phase === 'speaking'
+  useEffect(() => {
+    if (!working) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !document.querySelector('.vg-cal')) stopAnswer()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [working])
   const muted = useMuted()
   const [text, setText] = useState('')
   const box = useRef<HTMLTextAreaElement>(null)
@@ -1104,6 +1182,42 @@ function AskBar() {
     if (ASKS_FOR_TEXT.test(text)) setChat(true)
     void ask(text)
     setText('')
+    histAt.current = -1
+  }
+
+  // ↑ / ↓: earlier requests, like a terminal. -1 is what's being typed now
+  // (kept, and back when ↓ goes past the newest). Only from the first line
+  // (↑) or the last line (↓), so moving within several lines still works.
+  const history = usePromptHistory()
+  const histAt = useRef(-1)
+  const draft = useRef('')
+  const recall = (to: number) => {
+    histAt.current = to
+    const t = to < 0 ? draft.current : history[history.length - 1 - to]
+    setText(t)
+    // The caret to the end once the new text is in.
+    requestAnimationFrame(() => {
+      const el = box.current
+      if (el) el.selectionStart = el.selectionEnd = el.value.length
+    })
+  }
+  const onHistoryKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || e.nativeEvent.isComposing || !history.length) return false
+    const el = e.currentTarget
+    if (el.selectionStart !== el.selectionEnd) return false
+    if (e.key === 'ArrowUp') {
+      if (el.value.lastIndexOf('\n', el.selectionStart - 1) !== -1) return false // not on the first line
+      if (histAt.current >= history.length - 1) return true // already the oldest
+      if (histAt.current < 0) draft.current = text
+      recall(histAt.current + 1)
+      return true
+    }
+    if (e.key === 'ArrowDown') {
+      if (histAt.current < 0 || el.value.indexOf('\n', el.selectionStart) !== -1) return false // not recalling, or not on the last line
+      recall(histAt.current - 1)
+      return true
+    }
+    return false
   }
   // The box grows with its lines (Shift+Enter), up to a few, then scrolls.
   useEffect(() => {
@@ -1116,6 +1230,13 @@ function AskBar() {
   return (
     <div className={`vg-ask ${listening ? 'vg-live' : ''}`}>
       {error && <div className="vg-ask-error" role="alert">{error}</div>}
+      {/* Stop, at the far left, only while an answer is being made or spoken. */}
+      {working && (
+        <button type="button" className="vg-stop" title="Stop (Esc)" aria-label="Stop the answer" onClick={stopAnswer}>
+          <Icon size={16} w={2.2}>{I.stop}</Icon>
+          <span>Stop</span>
+        </button>
+      )}
       <BrainPick />
       <Wave level={listening ? level : 0} bars={7} idle={listening ? 0.45 : 0.3} className="vg-ask-wave" />
       {/* Enter sends; Shift+Enter starts a new line. */}
@@ -1123,37 +1244,25 @@ function AskBar() {
         ref={box}
         rows={1}
         value={text}
-        placeholder={muted ? 'Microphone muted — type here, or tap the mic to unmute' : listening ? caption || 'Listening…' : inChat ? 'Reply…  (Shift+Enter for a new line)' : 'Ask me anything…'}
-        onChange={(e) => setText(e.target.value)}
+        placeholder={muted ? 'Microphone muted — type here, or hold the mic to unmute' : listening ? caption || 'Listening…' : inChat ? 'Reply…  (Shift+Enter for a new line)' : 'Ask me anything…'}
+        onChange={(e) => {
+          setText(e.target.value)
+          // Typing over a recalled request makes it the new draft.
+          histAt.current = -1
+          draft.current = e.target.value
+        }}
         onKeyDown={(e) => {
+          if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && onHistoryKey(e)) {
+            e.preventDefault()
+            return
+          }
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault()
             send()
           }
         }}
       />
-      {/* Muted: the mic shows it, and a tap unmutes and listens. */}
-      <button
-        type="button"
-        className={`vg-mic ${muted ? 'vg-muted' : ''}`}
-        title={muted ? 'Microphone muted — tap to unmute' : listening ? 'Stand by' : 'Talk to JARVIS'}
-        onClick={() => void listen()}
-      >
-        <Icon size={20}>{I.mic}</Icon>
-      </button>
-      {/* Mute: stop him listening for a while; tap again (or the mic) to unmute. */}
-      <button
-        type="button"
-        className={`vg-mute ${muted ? 'vg-mute-on' : ''}`}
-        title={muted ? 'Microphone muted — tap to unmute' : 'Mute the microphone'}
-        aria-pressed={muted}
-        onClick={() => void mute(!muted)}
-      >
-        <Icon size={18}>
-          {I.mic}
-          <path d="M4 4l16 16" />
-        </Icon>
-      </button>
+      <MicButton muted={muted} listening={listening} />
       <button type="button" className="vg-send" title="Send" onClick={send} disabled={!text.trim()}>
         <Icon size={18}>{I.send}</Icon>
       </button>

@@ -23,6 +23,7 @@ import {
   ask,
   warm,
   interrupt,
+  cancel,
   endSession,
   watchServers,
   watchPanels,
@@ -1031,9 +1032,21 @@ export default function App() {
       done()
     }
     window.addEventListener('jarvis-read', read)
+    // "Stop" in the prompt box: cut the voice, stop the request in the bridge
+    // (no more generating or tokens), keep what was written, and stand by.
+    const stopAnswer = () => {
+      const s = store.getState()
+      sessionTurn.current.set(s.activeSession, (sessionTurn.current.get(s.activeSession) ?? 0) + 1)
+      cancel(s.activeSession)
+      s.setSessionBusy(s.activeSession, false)
+      goDormant()
+      sfx.play('done')
+    }
+    window.addEventListener('jarvis-stop', stopAnswer)
     window.addEventListener('jarvis-read-stop', stop)
     return () => {
       window.removeEventListener('jarvis-read', read)
+      window.removeEventListener('jarvis-stop', stopAnswer)
       window.removeEventListener('jarvis-read-stop', stop)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

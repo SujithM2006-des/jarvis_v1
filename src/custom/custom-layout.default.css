@@ -2395,3 +2395,61 @@ button.vg-avatar.vg-avatar-on { box-shadow: 0 0 0 2px rgba(63, 182, 255, 0.7), 0
 }
 .vg-ask .vg-brain { margin-bottom: 5px; }
 .vg-ask .vg-ask-wave { margin-bottom: 12px; }
+
+/* The one mic button: tap = listen / standby, hold = mute / unmute.
+   Red with a slash while muted (like the popup's); while held, a ring fills
+   around it so the hold can be seen coming. */
+.vg-ask .vg-mic { position: relative; }
+.vg-ask .vg-mic.vg-muted {
+  opacity: 1;
+  filter: none;
+  color: #fff !important;
+  background: linear-gradient(135deg, #e0465a, #8a1a2a) !important;
+  box-shadow: 0 0 16px rgba(224, 70, 90, 0.5) !important;
+}
+.vg-ask .vg-mic::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 15px;
+  pointer-events: none;
+  background: conic-gradient(#fff 0turn, #fff var(--p, 0turn), transparent var(--p, 0turn));
+  -webkit-mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  padding: 2px;
+  opacity: 0;
+}
+@property --p { syntax: '<angle>'; inherits: false; initial-value: 0turn; }
+.vg-ask .vg-mic.vg-holding::after {
+  opacity: 0.9;
+  animation: vg-hold var(--hold, 700ms) linear forwards;
+}
+@keyframes vg-hold { from { --p: 0turn; } to { --p: 1turn; } }
+
+/* Stop: at the far left of the prompt box while an answer is being made. */
+.vg-ask .vg-stop {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  margin-bottom: 5px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 110, 120, 0.55) !important;
+  background: rgba(224, 70, 90, 0.14) !important;
+  color: #ffb4bc !important;
+  font-size: 12.5px !important;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  animation: vg-stop-in 0.25s var(--ease) both;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.vg-ask .vg-stop:hover {
+  color: #fff !important;
+  background: linear-gradient(135deg, #e0465a, #8a1a2a) !important;
+  box-shadow: 0 0 14px rgba(224, 70, 90, 0.45);
+}
+.vg-ask .vg-stop:focus-visible { outline: 2px solid #ff8a94; outline-offset: 2px; }
+@keyframes vg-stop-in { from { opacity: 0; transform: translateX(-8px); } }
+@media (max-width: 900px) { .vg-ask .vg-stop span { display: none; } .vg-ask .vg-stop { padding: 0 10px; } }
