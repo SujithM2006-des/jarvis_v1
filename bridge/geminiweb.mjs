@@ -459,6 +459,66 @@ export async function planVideo(prompt, { aspect = '9:16', out, characters = [] 
 
 const keyOf = (name) => String(name).trim().toLowerCase()
 
+/**
+ * Flow's character voices (the same 30 voices as Gemini's speech, so a
+ * character sounds the same in Flow and in Gemini voiceovers).
+ */
+export const FLOW_VOICES = {
+  Achernar: 'Female, soft, high pitch', Achird: 'Male, friendly, mid pitch', Algenib: 'Male, gravelly, low pitch',
+  Algieba: 'Male, easy-going, mid-low pitch', Alnilam: 'Male, firm, mid-low pitch', Aoede: 'Female, breezy, mid pitch',
+  Autonoe: 'Female, bright, mid pitch', Callirrhoe: 'Female, easy-going, mid pitch', Charon: 'Male, informative, lower pitch',
+  Despina: 'Female, smooth, mid pitch', Enceladus: 'Male, breathy, lower pitch', Erinome: 'Female, clear, mid pitch',
+  Fenrir: 'Male, excitable, younger pitch', Gacrux: 'Female, mature, mid pitch', Iapetus: 'Male, clear, mid-low pitch',
+  Kore: 'Female, firm, mid pitch', Laomedeia: 'Female, upbeat, mid-high pitch', Leda: 'Female, youthful, mid-high pitch',
+  Orus: 'Male, firm, mid-low pitch', Puck: 'Male, upbeat, mid pitch', Pulcherrima: 'Ungendered, forward, mid-high pitch',
+  Rasalgethi: 'Male, informative, mid pitch', Sadachbia: 'Male, lively, low pitch', Sadaltager: 'Male, knowledgeable, mid pitch',
+  Schedar: 'Male, even, mid-low pitch', Sulafat: 'Female, warm, mid pitch', Umbriel: 'Male, smooth, lower pitch',
+  Vindemiatrix: 'Female, gentle, mid pitch', Zephyr: 'Female, bright, mid-high pitch', Zubenelgenubi: 'Male, casual, mid-low pitch',
+}
+
+/**
+ * A voice that suits a character and that no other character already has:
+ * gender from the description, then the age (old → low/gravelly/mature;
+ * child → younger/bright/high; young → youthful/upbeat; else firm/warm/clear).
+ */
+export function pickVoice(description, taken = []) {
+  const d = ` ${String(description).toLowerCase()} `
+  const female = /\b(woman|women|girl|female|lady|mother|mom|amma|grandmother|grandma|paati|aunt|sister|daughter|queen|princess|she|her)\b/.test(d)
+  const age = Number((d.match(/\b(\d{1,2})[- ]?(year|yr)s?[- ]?old\b/) || [])[1]) || null
+  // "10-year-old" has the word "old" in it: the age, when given, decides.
+  const old = age ? age >= 55 : /\b(old|elderly|aged|grandfather|grandpa|thatha|grandmother|grandma|paati|senior)\b/.test(d)
+  const child = age ? age <= 13 : /\b(child|kid|little boy|little girl|toddler|baby|boy|girl)\b/.test(d)
+  const young = !child && (age ? age <= 25 : /\b(teen|teenager|young|youth|college)\b/.test(d))
+  const prefs = old
+    ? [/gravelly|mature|low pitch|lower pitch|even/i]
+    : child
+      ? [/younger|youthful|high pitch|mid-high|excitable|bright/i]
+      : young
+        ? [/youthful|upbeat|lively|mid-high|bright|friendly/i]
+        : [/firm|warm|clear|friendly|smooth|easy-going/i]
+  const fits = Object.entries(FLOW_VOICES).filter(([n, v]) => (female ? /^Female/.test(v) : /^Male/.test(v)) && !taken.includes(n))
+  const best = fits.find(([, v]) => prefs[0].test(v)) ?? fits[0] ?? Object.entries(FLOW_VOICES).find(([n]) => !taken.includes(n))
+  return best ? best[0] : female ? 'Kore' : 'Charon'
+}
+
+/**
+ * How a character's voice is described in a prompt, with their age so the
+ * voice sounds as old as they look: "an elderly man's gravelly, low pitch
+ * voice", "a young boy's excitable, younger pitch voice".
+ */
+export function voiceLine(c) {
+  const v = FLOW_VOICES[c?.voice]
+  if (!v) return ''
+  const d = ` ${String(c.description ?? '').toLowerCase()} `
+  const female = /^Female/.test(v)
+  const age = Number((d.match(/\b(\d{1,2})[- ]?(year|yr)s?[- ]?old\b/) || [])[1]) || null
+  const old = age ? age >= 55 : /\b(old|elderly|aged|grandfather|grandpa|thatha|grandmother|grandma|paati|senior)\b/.test(d)
+  const child = age ? age <= 13 : /\b(child|kid|toddler|baby|little boy|little girl)\b/.test(d)
+  const young = !child && (age ? age <= 25 : /\b(teen|teenager|young|youth|college)\b/.test(d))
+  const who = old ? (female ? 'an elderly woman' : 'an elderly man') : child ? (female ? 'a young girl' : 'a young boy') : young ? (female ? 'a young woman' : 'a young man') : female ? 'a woman' : 'a man'
+  return `${who}'s ${v.toLowerCase().replace(/^(female|male|ungendered), /, '')} voice`
+}
+
 /** The characters JARVIS has made in his Flow project. */
 export function flowCharacterList() {
   return Object.values(readFlow().characters ?? {})
@@ -469,10 +529,62 @@ export function flowCharacterList() {
  * (children: Flow won't animate them from a picture). Their description is
  * written into every scene they're in.
  */
-export function flowRememberTextCharacter({ name, description, image }) {
+export function flowRememberTextCharacter({ name, description, image, voice }) {
   const state = readFlow()
-  state.characters = { ...(state.characters ?? {}), [keyOf(name)]: { name, description, image, textOnly: true } }
+  state.characters = { ...(state.characters ?? {}), [keyOf(name)]: { name, description, image, voice, textOnly: true } }
   saveFlow(state)
+}
+
+/** The voices already given to characters (so no two share one). */
+export const takenVoices = () => flowCharacterList().map((c) => c.voice).filter(Boolean)
+
+/** Give a Flow character its voice ("Select a voice" → the voice → Add to character). */
+async function setCharacterVoice(page, voice) {
+  await page.getByRole('button', { name: /Select a voice|voice_selection/ }).first().click({ timeout: 10_000 })
+  await page.waitForTimeout(1500)
+  // The option's text runs together: "voice_selectionAlgenibMale, gravelly, …".
+  const opt = () => page.locator('.cdk-overlay-container [role="option"]').filter({ hasText: new RegExp(`${voice}\\s*(Male|Female|Ungendered)`) })
+  // The list is long: scroll until the voice is there.
+  for (let i = 0; i < 12 && !(await opt().count()); i++) {
+    await page.locator('.cdk-overlay-container [role="option"]').last().scrollIntoViewIfNeeded().catch(() => {})
+    await page.mouse.wheel(0, 400)
+    await page.waitForTimeout(500)
+  }
+  if (!(await opt().count())) throw new Error(`Flow has no voice called ${voice}.`)
+  await opt().first().click()
+  await page.waitForTimeout(800)
+  await page.getByRole('button', { name: 'Add to character' }).click({ timeout: 8000 })
+  await page.waitForTimeout(1500)
+}
+
+/** Give an existing Flow character a voice (and remember it). */
+export function flowSetVoice(name, voice) {
+  const run = busy.then(async () => {
+    const state = readFlow()
+    const c = state.characters?.[keyOf(name)]
+    if (!c) throw new Error(`No character called ${name}.`)
+    if (!c.textOnly) {
+      await ensureChrome()
+      const b = await connect()
+      let page
+      try {
+        page = await b.contexts()[0].newPage()
+        await page.goto(`${state.project}/character/${c.id}`, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+        await page.waitForTimeout(4000)
+        await setCharacterVoice(page, voice)
+        await page.getByRole('button', { name: 'Done', exact: true }).first().click({ timeout: 8000 }).catch(() => {})
+        await page.waitForTimeout(1500)
+      } finally {
+        await page?.close().catch(() => {})
+        await b.close().catch(() => {})
+      }
+    }
+    c.voice = voice
+    saveFlow(state)
+    return c
+  })
+  busy = run.catch(() => {})
+  return run
 }
 
 /** Split a scene's characters: attached in Flow, or written into the prompt. */
@@ -489,13 +601,13 @@ function castFor(names) {
 }
 
 /** Upload a picture as a new Flow character, named and described. */
-export function flowAddCharacter({ name, description = '', image }) {
-  const run = busy.then(() => addCharacter(name, description, image))
+export function flowAddCharacter({ name, description = '', image, voice }) {
+  const run = busy.then(() => addCharacter(name, description, image, voice))
   busy = run.catch(() => {})
   return run
 }
 
-async function addCharacter(name, description, image) {
+async function addCharacter(name, description, image, voice) {
   if (!existsSync(image)) throw new Error(`No picture at ${image}`)
   await ensureChrome()
   const b = await connect()
@@ -544,10 +656,12 @@ async function addCharacter(name, description, image) {
           : `The picture of ${name} didn't finish uploading to Google Flow.`,
       )
     }
+    // Its own voice, so it always sounds the same when it speaks.
+    if (voice) await setCharacterVoice(page, voice).catch((err) => console.log(`[jarvis] couldn't set ${name}'s voice: ${err.message}`))
     await page.getByRole('button', { name: 'Done', exact: true }).first().click({ timeout: 10_000 })
     await page.waitForTimeout(2500)
     const state = readFlow()
-    state.characters = { ...(state.characters ?? {}), [keyOf(name)]: { name, id, description } }
+    state.characters = { ...(state.characters ?? {}), [keyOf(name)]: { name, id, description, voice } }
     saveFlow(state)
     return { name, id }
   } finally {

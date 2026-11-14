@@ -23,11 +23,16 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import {
+  FLOW_VOICES,
   ImageLimitError,
   VideoLimitError,
   chatgptImage,
+  flowSetVoice,
+  pickVoice,
+  takenVoices,
+  voiceLine,
   flowAddCharacter,
   flowCharacterList,
   flowCredits,
@@ -74,12 +79,17 @@ const geminiKey = () => readKeys().gemini?.key || null
 
 const CHARACTERS_DIR = join(OUT.pictures, 'Characters')
 const lower = (s) => String(s).trim().toLowerCase()
+/** A story character's saved details (description, voice …), by name. */
+const castInfo = (name) => flowCharacterList().find((c) => lower(c.name) === lower(name)) ?? null
 
 /** A child (by the description), for whom Flow won't take a realistic photo. */
 const isChild = (d) => /\b(\d|1[0-7])[- ]?(year|yr)s?[- ]?old\b|\b(child|kid|boy|girl|baby|toddler|teen(ager)?|schoolboy|schoolgirl|son|daughter)\b/i.test(d) && !/\b(man|woman|adult|grown)\b/i.test(d)
 
 /** One character: ChatGPT draws the reference, Flow gets it with the name and description. */
-async function makeCharacter({ name, description }, style) {
+async function makeCharacter({ name, description, voice }, style) {
+  // Its own voice: the one asked for, or one that suits it and no other
+  // character already has.
+  voice = voice && FLOW_VOICES[voice] ? voice : pickVoice(description, takenVoices())
   // Google Flow refuses realistic photos of children as characters, so a
   // child is drawn in an animated style unless another was asked for.
   style ??= isChild(description) ? 'Pixar-style 3D animated character, soft cinematic lighting' : 'photorealistic, cinematic lighting'
@@ -92,8 +102,8 @@ async function makeCharacter({ name, description }, style) {
   )
   // Children: Flow refuses to animate them from a picture (even a cartoon), so
   // they are kept in words and described in every scene instead.
-  if (isChild(description)) flowRememberTextCharacter({ name, description: `${description}; ${style}`, image: file })
-  else await flowAddCharacter({ name, description, image: file })
+  if (isChild(description)) flowRememberTextCharacter({ name, description: `${description}; ${style}`, image: file, voice })
+  else await flowAddCharacter({ name, description, image: file, voice })
   return file
 }
 
@@ -264,7 +274,8 @@ const TAMIL_VOICES = {
   Kumar: 'ta-LK-KumarNeural',
 }
 const EDGE_TTS = join(homedir(), '.jarvis', 'wake-venv', 'Scripts', 'edge-tts.exe')
-const GEMINI_VOICES = ['Kore', 'Puck', 'Charon', 'Aoede', 'Fenrir', 'Leda', 'Orus', 'Zephyr']
+// Gemini's speech has the same 30 voices as Flow's characters.
+const GEMINI_VOICES = Object.keys(FLOW_VOICES)
 export const VOICES = [...GEMINI_VOICES, ...Object.keys(TAMIL_VOICES)]
 
 /** Tamil speech with edge-tts, to a WAV; null if it isn't available. */
@@ -445,7 +456,10 @@ export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore'
     for (const [i, s] of scenes.entries()) {
       // A voice only where the scene has narration; cinematic scenes run on
       // the AI clip's own sound and music.
-      const said = String(s.narration ?? '').trim()
+      // Dialogue: characters speaking on screen, lips in sync (made by Flow
+      // itself). A scene with dialogue gets no voiceover over it.
+      const lines = (s.dialogue ?? []).filter((l) => String(l.line ?? '').trim())
+      const said = lines.length ? '' : String(s.narration ?? '').trim()
       let voiceFile = null
       if (said) {
         const v = await speak(said, voice, join(work, `s${i}.wav`))
@@ -458,10 +472,11 @@ export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore'
       // Text drawn on the scene: the narration as subtitles (bottom), and/or a
       // short on-screen caption (top), like trending reels.
       const overlays = []
-      if (said && subtitles) {
+      const subText = lines.length ? lines.map((l) => `${l.character}: ${l.line}`).join('\n') : said
+      if (subText && subtitles) {
         const tf = join(work, `s${i}.txt`)
-        const width = (aspect === '9:16' ? 26 : 42) * (TAMIL.test(said) ? 0.8 : 1)
-        writeFileSync(tf, wrap(said, Math.round(width)))
+        const width = (aspect === '9:16' ? 26 : 42) * (TAMIL.test(subText) ? 0.8 : 1)
+        writeFileSync(tf, subText.split('\n').map((x) => wrap(x, Math.round(width))).join('\n'))
         overlays.push(drawText(tf, { w: W, h: H }))
       }
       if (s.text) {
@@ -475,8 +490,16 @@ export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore'
       if (!aiOff) {
         try {
           const r = await planVideo(
-            `${s.visual}. Photorealistic, cinematic lighting, realistic natural motion, smooth camera movement. ` +
-              `${said ? 'Ambient sound only, no dialogue.' : 'A fitting cinematic soundtrack with ambient sound, no dialogue.'} ` +
+            `${s.visual}. ${style || 'Photorealistic, cinematic lighting'}, realistic natural motion, smooth camera movement. ` +
+              (lines.length
+                ? `Spoken dialogue, said aloud clearly with lips moving in sync with the words: ${lines
+                    .map((l) => {
+                      // Each speaker in their own voice, described every time.
+                      const v = voiceLine(castInfo(l.character))
+                      return `${l.character}${v ? ` (in ${v})` : ''} says${l.language ? ` in ${l.language}` : ''}: "${String(l.line).trim()}"`
+                    })
+                    .join(' Then ')}. Natural voices, soft ambient sound under the voices, no music over the dialogue, no other speech. `
+                : `${said ? 'Ambient sound only, no dialogue.' : 'A fitting cinematic soundtrack with ambient sound, no dialogue.'} `) +
               'No text, captions, subtitles or watermarks in the video.',
             { aspect: aspect === '16:9' ? '16:9' : '9:16', out: join(work, `s${i}-ai.mp4`), characters: s.characters ?? [] },
           )
@@ -521,6 +544,23 @@ export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore'
         continue
       }
 
+      // A picture can't speak: its dialogue is read out by the voice instead.
+      if (lines.length && !voiceFile) {
+        // Each line in its speaker's own voice, joined in order.
+        const parts = []
+        for (const [k, l] of lines.entries()) {
+          const c = castInfo(l.character)
+          const tamil = TAMIL.test(l.line)
+          const female = /^Female/.test(FLOW_VOICES[c?.voice] ?? '')
+          const v = await speak(String(l.line).trim(), tamil ? (female ? 'Pallavi' : 'Valluvar') : c?.voice || voice, join(work, `s${i}-l${k}.wav`))
+          voiceBy = v.by
+          parts.push(v.file)
+        }
+        voiceFile = join(work, `s${i}.wav`)
+        if (parts.length === 1) copyFileSync(parts[0], voiceFile)
+        else await ffmpeg([...parts.flatMap((p) => ['-i', p]), '-filter_complex', `${parts.map((_, k) => `[${k}:a]`).join('')}concat=n=${parts.length}:v=0:a=1[a]`, '-map', '[a]', voiceFile])
+        dur = Math.max(2, ((await duration(voiceFile)) ?? 4) + 0.6)
+      }
       const img = await makeImage(`${s.visual}. Cinematic, high detail, no text in the image.`, aspect, join(work, `s${i}.png`))
       const frames = Math.ceil(dur * 30)
       const vf = [
@@ -720,6 +760,10 @@ export function creatorServer() {
               z.object({
                 visual: z.string().describe('The moving shot: subject (fully described, same words every scene for a recurring character), action, setting, light, camera move'),
                 narration: z.string().optional().describe('Voiceover for the scene; leave out for a cinematic reel that runs on the video\'s own music and sound'),
+                dialogue: z
+                  .array(z.object({ character: z.string(), line: z.string(), language: z.string().optional() }))
+                  .optional()
+                  .describe('Lines characters SAY on screen, lip-synced by Flow (short: about 4 s of speech per clip); replaces narration for the scene'),
                 text: z.string().optional().describe('A short on-screen caption at the top (2-6 words)'),
                 characters: z.array(z.string()).optional().describe('Names of the story characters in this scene/page; each is attached in Flow before the scene is generated'),
               }),
@@ -841,7 +885,16 @@ export function creatorServer() {
           'every scene shows the same faces. About 20-40 s per character. Characters already in Flow are ' +
           'skipped unless remake is true. Describe each fully: age, face, hair, skin, build, clothes, style.',
         {
-          characters: z.array(z.object({ name: z.string(), description: z.string() })).min(1).max(12),
+          characters: z
+            .array(
+              z.object({
+                name: z.string(),
+                description: z.string(),
+                voice: z.string().optional().describe(`Their own voice, one of: ${Object.entries(FLOW_VOICES).map(([n, v]) => `${n} (${v})`).join('; ')}. Left out: one that suits them and no other character has is picked`),
+              }),
+            )
+            .min(1)
+            .max(12),
           style: z.string().optional().describe('e.g. "photorealistic", "Pixar-style 3D animation", "anime", "claymation"'),
           remake: z.boolean().optional(),
         },
@@ -878,9 +931,29 @@ export function creatorServer() {
           const list = flowCharacterList()
           return text(
             list.length
-              ? list.map((c) => `- ${c.name}${c.textOnly ? ' (a child: described in words in each scene, as Flow won\'t animate children from a picture)' : ' (a Flow character)'}: ${c.description}`).join('\n')
+              ? list
+                  .map(
+                    (c) =>
+                      `- ${c.name}${c.textOnly ? ' (a child: described in words in each scene, as Flow won\'t animate children from a picture)' : ' (a Flow character)'}` +
+                      `${c.voice ? `, voice ${c.voice} (${FLOW_VOICES[c.voice] ?? '?'})` : ', no voice yet'}: ${c.description}`,
+                  )
+                  .join('\n')
               : 'No story characters yet.',
           )
+        },
+      ),
+      tool(
+        'set_character_voice',
+        "Give a story character their own voice (set on their Google Flow character), or change it. No two characters should share a voice.",
+        { name: z.string(), voice: z.enum(Object.keys(FLOW_VOICES)).describe(Object.entries(FLOW_VOICES).map(([n, v]) => `${n}: ${v}`).join('; ')) },
+        async ({ name, voice }) => {
+          const other = flowCharacterList().find((c) => c.voice === voice && lower(c.name) !== lower(name))
+          try {
+            await flowSetVoice(name, voice)
+            return text(`${name} now speaks with ${voice} (${FLOW_VOICES[voice]}).${other ? ` Note: ${other.name} has that voice too.` : ''}`)
+          } catch (err) {
+            return failText(`Couldn't set the voice: ${err.message}`)
+          }
         },
       ),
       tool(
@@ -978,6 +1051,13 @@ export const PROMPT_CREATOR = `Creating things — the jarvis_creator tools:
     page in its \`characters\` (they are attached in Flow before that scene is
     generated), and pass the descriptions in \`cast\` so any character not yet
     in Flow is made first. Never leave a character out of a scene's list.
+  * Characters TALKING on screen (lip sync): put their lines in the scene's
+    \`dialogue\` ({character, line}) — Flow makes them say it with matching
+    lips. Keep each scene's speech short (Flow clips are about 4 seconds:
+    one or two short sentences). Don't also give narration for that scene.
+  * Every character has their OWN voice (picked to suit them when made, never
+    shared; set_character_voice changes it). Their lines are always spoken
+    in it, in Flow and in any voiceover.
   * list_story_characters shows who is already in Flow. If ChatGPT isn't
     signed in: chatgpt_login.
 - "Edit the video …", "add a voiceover", "cut the first 5 seconds", "make it
