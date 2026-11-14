@@ -24,7 +24,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { VideoLimitError, geminiVideo, openGeminiLogin } from './geminiweb.mjs'
+import { VideoLimitError, flowCredits, openGeminiLogin, planVideo } from './geminiweb.mjs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, extname, join, normalize, resolve as resolvePath, sep } from 'node:path'
 import { readKeys } from './brain.mjs'
@@ -365,56 +365,83 @@ export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore'
     let voiceBy = ''
     let aiOff = motion !== 'ai'
     let aiClips = 0
+    let aiFails = 0
     let aiNote = ''
     for (const [i, s] of scenes.entries()) {
-      const v = await speak(s.narration, voice, join(work, `s${i}.wav`))
-      voiceBy = v.by
-      let dur = Math.max(2, ((await duration(v.file)) ?? 4) + 0.6)
+      // A voice only where the scene has narration; cinematic scenes run on
+      // the AI clip's own sound and music.
+      const said = String(s.narration ?? '').trim()
+      let voiceFile = null
+      if (said) {
+        const v = await speak(said, voice, join(work, `s${i}.wav`))
+        voiceBy = v.by
+        voiceFile = v.file
+      }
+      let dur = voiceFile ? Math.max(2, ((await duration(voiceFile)) ?? 4) + 0.6) : 4.5
       const clip = join(work, `s${i}.mp4`)
+
+      // Text drawn on the scene: the narration as subtitles (bottom), and/or a
+      // short on-screen caption (top), like trending reels.
+      const overlays = []
+      if (said && subtitles) {
+        const tf = join(work, `s${i}.txt`)
+        const width = (aspect === '9:16' ? 26 : 42) * (TAMIL.test(said) ? 0.8 : 1)
+        writeFileSync(tf, wrap(said, Math.round(width)))
+        overlays.push(drawText(tf, { w: W, h: H }))
+      }
+      if (s.text) {
+        const tf = join(work, `s${i}-top.txt`)
+        writeFileSync(tf, wrap(String(s.text), aspect === '9:16' ? 20 : 34))
+        overlays.push(drawText(tf, { w: W, h: H, place: 'top', size: Math.round(Math.min(W, H) / 13) }))
+      }
 
       // Real motion: a Veo clip of the scene.
       let moving = null
       if (!aiOff) {
         try {
-          const r = await geminiVideo(
-            `${s.visual}. Cinematic, realistic natural motion, smooth camera movement. No text, captions, subtitles or watermarks in the video. No dialogue.`,
+          const r = await planVideo(
+            `${s.visual}. Photorealistic, cinematic lighting, realistic natural motion, smooth camera movement. ` +
+              `${said ? 'Ambient sound only, no dialogue.' : 'A fitting cinematic soundtrack with ambient sound, no dialogue.'} ` +
+              'No text, captions, subtitles or watermarks in the video.',
             { aspect: aspect === '16:9' ? '16:9' : '9:16', out: join(work, `s${i}-ai.mp4`) },
           )
           moving = r.file
           aiClips++
+          aiFails = 0
         } catch (err) {
-          aiNote = err instanceof VideoLimitError ? "Gemini's daily video limit was reached" : String(err.message).split('\n')[0].slice(0, 160)
-          // Limits, sign-in and missing tools won't fix themselves mid-reel.
-          if (err instanceof VideoLimitError || /signed in|Create video|not installed|start/i.test(err.message)) aiOff = true
+          aiNote = err instanceof VideoLimitError ? "today's Gemini videos and this month's Flow credits are used up" : String(err.message).split('\n')[0].slice(0, 160)
+          // The limit and sign-in won't fix themselves mid-reel; anything else
+          // gets another go on the next scene, unless it fails twice running.
+          aiFails++
+          if (err instanceof VideoLimitError || /signed in|not installed/i.test(err.message) || aiFails >= 2) aiOff = true
           console.log(`[jarvis] AI video for scene ${i + 1} failed (${aiNote}) - using a still`)
         }
       }
+
+      const enc = ['-r', '30', '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-ar', '48000', '-ac', '2']
       if (moving) {
         // The scene runs the whole AI clip (up to 10 s), or longer if the narration needs it.
-        dur = Math.max(dur, Math.min(10, (await duration(moving).catch(() => null)) ?? 0))
+        dur = Math.max(voiceFile ? dur : 0, Math.min(10, (await duration(moving).catch(() => null)) ?? 5))
         const vf = [
           `scale=${W}:${H}:force_original_aspect_ratio=increase`,
           `crop=${W}:${H}`,
           // Narration longer than the clip: hold its last frame.
           `tpad=stop_mode=clone:stop_duration=${Math.ceil(dur)}`,
           'fps=30',
+          ...overlays,
         ]
-        if (subtitles) {
-          const tf = join(work, `s${i}.txt`)
-          const width = (aspect === '9:16' ? 26 : 42) * (TAMIL.test(s.narration) ? 0.8 : 1)
-          writeFileSync(tf, wrap(s.narration, Math.round(width)))
-          vf.push(drawText(tf, { w: W, h: H }))
+        const own = await hasAudio(moving)
+        const inputs = ['-i', moving]
+        let audio
+        if (voiceFile) {
+          inputs.push('-i', voiceFile)
+          audio = own ? '[0:a]volume=0.22,apad[bg];[1:a]apad[vo];[bg][vo]amix=inputs=2:duration=longest:normalize=0[a]' : '[1:a]apad[a]'
+        } else {
+          // No narration: the clip's own sound, full volume (silence if it has none).
+          inputs.push('-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo')
+          audio = own ? '[0:a]apad[a]' : '[1:a]anull[a]'
         }
-        const audio = (await hasAudio(moving))
-          ? '[0:a]volume=0.22,apad[bg];[1:a]apad[vo];[bg][vo]amix=inputs=2:duration=longest:normalize=0[a]'
-          : '[1:a]apad[a]'
-        await ffmpeg([
-          '-i', moving, '-i', v.file,
-          '-filter_complex', `[0:v]${vf.join(',')}[v];${audio}`,
-          '-map', '[v]', '-map', '[a]',
-          '-t', dur.toFixed(2), '-r', '30', '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
-          '-c:a', 'aac', '-ar', '48000', '-ac', '2', clip,
-        ])
+        await ffmpeg([...inputs, '-filter_complex', `[0:v]${vf.join(',')}[v];${audio}`, '-map', '[v]', '-map', '[a]', '-t', dur.toFixed(2), ...enc, clip])
         clips.push(clip)
         continue
       }
@@ -425,19 +452,13 @@ export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore'
         `scale=${Math.round(W * 1.15)}:${Math.round(H * 1.15)}:force_original_aspect_ratio=increase`,
         `crop=${Math.round(W * 1.15)}:${Math.round(H * 1.15)}`,
         `zoompan=z='min(zoom+0.0007,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${W}x${H}:fps=30`,
+        ...overlays,
       ]
-      if (subtitles) {
-        const tf = join(work, `s${i}.txt`)
-        // Tamil letters run wider: shorter lines.
-        const width = (aspect === '9:16' ? 26 : 42) * (TAMIL.test(s.narration) ? 0.8 : 1)
-        writeFileSync(tf, wrap(s.narration, Math.round(width)))
-        vf.push(drawText(tf, { w: W, h: H }))
-      }
       await ffmpeg([
-        '-loop', '1', '-i', img, '-i', v.file,
-        '-vf', vf.join(','), '-af', 'apad=pad_dur=0.6',
-        '-t', dur.toFixed(2), '-r', '30', '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
-        '-c:a', 'aac', '-ar', '48000', '-ac', '2', clip,
+        '-loop', '1', '-i', img,
+        ...(voiceFile ? ['-i', voiceFile] : ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo']),
+        '-vf', vf.join(','), '-af', 'apad=pad_dur=0.6', '-map', '0:v', '-map', '1:a',
+        '-t', dur.toFixed(2), ...enc, clip,
       ])
       clips.push(clip)
     }
@@ -612,14 +633,23 @@ export function creatorServer() {
         'make_reel',
         'Make a video from a script, scenes joined into one MP4 in Videos\\Jarvis, each scene\'s ' +
           '`narration` voiced and shown as subtitles. motion "ai" (default): each scene is a REAL ' +
-          'animated AI video of `visual` (Veo, through the user\'s Gemini plan — 1-4 minutes per scene, ' +
-          'a few per day); when the daily limit is reached, the rest become "still" scenes (a ' +
+          'animated AI video of `visual` made with GOOGLE FLOW (about 12 credits and 1-2 minutes per ' +
+          'scene; the Gemini app if Flow can\'t); when both are used up, the rest become "still" scenes (a ' +
           'generated picture with a slow zoom, ~20 s each). 9:16 suits Reels/Shorts. Write short ' +
           'narrations (one or two sentences per scene) and vivid, concrete visual descriptions of the ' +
           'action and camera movement.',
         {
           title: z.string(),
-          scenes: z.array(z.object({ narration: z.string(), visual: z.string() })).min(1).max(12),
+          scenes: z
+            .array(
+              z.object({
+                visual: z.string().describe('The moving shot: subject (fully described, same words every scene for a recurring character), action, setting, light, camera move'),
+                narration: z.string().optional().describe('Voiceover for the scene; leave out for a cinematic reel that runs on the video\'s own music and sound'),
+                text: z.string().optional().describe('A short on-screen caption at the top (2-6 words)'),
+              }),
+            )
+            .min(1)
+            .max(12),
           aspect: z.enum(['9:16', '16:9', '1:1', '4:5']).optional(),
           voice: z.string().optional(),
           subtitles: z.boolean().optional().describe('Default true'),
@@ -641,7 +671,7 @@ export function creatorServer() {
                     : `pictures with a slow zoom — no AI video (${r.aiNote || 'not available'})`
             return text(
               `Reel "${basename(r.file)}" made: ${args.scenes.length} scenes${r.seconds ? `, ${r.seconds.toFixed(0)} s` : ''}, ` +
-                `${args.aspect ?? '9:16'}, ${kind}, ${r.voiceBy} voice, in ${Math.round((Date.now() - t0) / 1000)} s. ` +
+                `${args.aspect ?? '9:16'}, ${kind}, ${r.voiceBy ? `${r.voiceBy} voice` : "no voiceover (the video's own sound)"}, in ${Math.round((Date.now() - t0) / 1000)} s. ` +
                 `Saved to ${r.file} and playing now.`,
             )
           } catch (err) {
@@ -651,26 +681,29 @@ export function creatorServer() {
       ),
       tool(
         'generate_video_clip',
-        "One real AI-generated video clip (about 8-10 s, with sound) from a description, with Google's " +
-          "Veo: through the API key if it has Veo, otherwise through the user's Gemini plan in JARVIS's " +
-          'Gemini window (1-4 minutes; a few per day). Describe the subject, action, setting, mood and ' +
-          'camera movement.',
+        'One real AI-generated video clip (about 4-10 s, with sound) from a description, made with ' +
+          "GOOGLE FLOW in JARVIS's window (the user's choice for every video; about 12 credits a clip), " +
+          "falling back to the Gemini app's daily videos only if Flow can't. 1-6 minutes. Describe the " +
+          'subject, action, setting, mood and camera movement.',
         { prompt: z.string(), aspect: z.enum(['9:16', '16:9']).optional(), name: z.string().optional() },
         async ({ prompt, aspect = '9:16', name }) => {
+          // Google Flow first, always (then the Gemini app); the API's Veo only
+          // if both fail and the key happens to have it.
+          const f = outFile(OUT.videos, name ?? `ai video ${stamp()}`, '.mp4')
+          let planErr
+          try {
+            const r = await planVideo(prompt, { aspect, out: f })
+            openFile(f)
+            return text(`AI video made with ${r.by === 'Flow' ? 'Google Flow' : 'the Gemini app (Flow was unavailable)'} in ${r.seconds} s: ${f} (playing now).`)
+          } catch (err) {
+            planErr = err
+          }
           const model = await veoModel()
           if (!model) {
-            // The user's Gemini subscription, in the Gemini app.
-            const f = outFile(OUT.videos, name ?? `ai video ${stamp()}`, '.mp4')
-            try {
-              const r = await geminiVideo(prompt, { aspect, out: f })
-              openFile(f)
-              return text(`AI video made with Veo through Gemini in ${r.seconds} s: ${f} (playing now).`)
-            } catch (err) {
-              if (err instanceof VideoLimitError) {
-                return failText(`Gemini's video limit for today is reached (${err.message}). I can make it as pictures with motion instead (make_reel, motion "still").`)
-              }
-              return failText(`Couldn't make the AI video: ${err.message}`)
+            if (planErr instanceof VideoLimitError) {
+              return failText(`${planErr.message} I can make it as pictures with motion instead (make_reel, motion "still").`)
             }
+            return failText(`Couldn't make the AI video with Google Flow: ${String(planErr.message).split('\n')[0]}`)
           }
           const key = geminiKey()
           try {
@@ -710,6 +743,17 @@ export function creatorServer() {
           } catch (err) {
             return failText(`Couldn't open the Gemini window: ${err.message}`)
           }
+        },
+      ),
+      tool(
+        'video_credits',
+        "How many Google Flow credits are left for AI videos this month (about 12 a clip), and when they reset.",
+        {},
+        async () => {
+          const c = await flowCredits()
+          return c
+            ? text(`${c.credits} Google Flow credits left (about ${Math.floor(c.credits / 12)} AI clips), resetting ${c.resets}. The Gemini app also gives a couple of free videos a day.`)
+            : failText("Couldn't read the Flow credits (the Gemini window isn't open or isn't signed in).")
         },
       ),
       tool(
@@ -754,7 +798,21 @@ export const PROMPT_CREATOR = `Creating things — the jarvis_creator tools:
   action, setting, light, camera move. Tell them it takes a few minutes and
   say plainly if some scenes came out as pictures, and why. motion "still"
   only when they want it quick or the limit is used up.
-- One short AI clip: generate_video_clip.
+- Trending AI reels (animals or characters in suits, luxury, "boss" vibes,
+  fantasy) are CINEMATIC: no narration — leave narration out so the video's
+  own music and sound carry it — with at most a 2-6 word on-screen \`text\`
+  per scene. Make them photorealistic and keep every recurring character
+  IDENTICAL across scenes by repeating the same full description word for
+  word in each visual (e.g. "a majestic white lion with a thick flowing mane,
+  wearing a cream three-piece suit and gold aviator sunglasses"). Vary the
+  shots: a wide establishing shot, a medium action shot, a dramatic close-up.
+  Add narration only when they ask for a voiceover or a story.
+- "Generate a video …" — ANY video request — is made with GOOGLE FLOW (their
+  choice): generate_video_clip for one clip, make_reel for several scenes;
+  both use Flow first, and the Gemini app only if Flow can't. Never answer
+  a video request with pictures unless Flow and Gemini are both unavailable
+  (say so). Flow costs about 12 credits a clip; video_credits says how many
+  are left.
 - If AI video says they aren't signed in: gemini_login, then they sign in once.
 - "Edit the video …", "add a voiceover", "cut the first 5 seconds", "make it
   vertical": edit_video on the file (the last video you made unless they name
