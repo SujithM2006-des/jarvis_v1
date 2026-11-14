@@ -7,7 +7,8 @@ rem The window opens at once on the loading screen (scripts\splash.html, read
 rem straight from disk), which shows progress and switches to JARVIS by itself
 rem the moment the brain and the interface are both up.
 cd /d "%~dp0"
-set JARVIS_ACCOUNT_CONNECTORS=1
+rem Gmail, Calendar & Drive (account connectors) are switched on in Customize,
+rem not here: their tools ride along with every request and cost usage.
 
 set "SPLASH=%~dp0scripts\splash.html"
 set "SPLASH=file:///%SPLASH:\=/%"

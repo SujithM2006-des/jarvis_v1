@@ -28,10 +28,16 @@ export async function ask(
   prompt: string,
   history: Msg[],
   handlers: AskHandlers,
+  session = 'main',
 ): Promise<{ text: string; tools: string[] }> {
   return usingBridge
-    ? bridge.ask(prompt, handlers)
+    ? bridge.ask(prompt, handlers, session)
     : direct.ask([...history, { role: 'user', content: prompt }], handlers)
+}
+
+/** A session closed in the window: its agent in the bridge is freed. */
+export function endSession(session: string): void {
+  if (usingBridge) bridge.endSession(session)
 }
 
 export async function warm(): Promise<void> {
@@ -138,8 +144,8 @@ export function watchCapture(
  * interrupting the agent and resolving with the text so far, on the direct
  * path by aborting the stream so the model stops generating and billing.
  */
-export function cancel(): void {
-  if (usingBridge) bridge.cancel()
+export function cancel(session?: string): void {
+  if (usingBridge) bridge.cancel(session)
   else direct.cancel()
 }
 

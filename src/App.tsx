@@ -23,6 +23,7 @@ import {
   ask,
   warm,
   interrupt,
+  endSession,
   watchServers,
   watchPanels,
   watchBlades,
@@ -202,10 +203,29 @@ export default function App() {
   const carryOver = useRef('')
   const CONTINUATION_MS = 8000
 
-  const respond = async (said: string): Promise<void> => {
+  /**
+   * Sessions. Each request belongs to the session on screen when it was made,
+   * and keeps writing its answer there even if another session is opened
+   * meanwhile — it runs on in the background. Only the turn that still holds
+   * the voice (`turn`, bumped by any new request or by switching sessions)
+   * speaks and drives the phase. A new request in the SAME session supersedes
+   * the one there (`sessionTurn`).
+   */
+  const sessionTurn = useRef(new Map<string, number>())
+
+  const respond = async (raw: string): Promise<void> => {
+    // "Retry" in the chat view: shown as the original request, asked for anew.
+    const retry = /^\[Retry\]\s*/.test(raw)
+    const said = raw.replace(/^\[Retry\]\s*/, '')
     const mine = ++turn.current
+    const sid = store.getState().activeSession
+    const mineHere = (sessionTurn.current.get(sid) ?? 0) + 1
+    sessionTurn.current.set(sid, mineHere)
     lastAsk.current = { text: said, at: Date.now(), answered: false }
-    const stale = () => mine !== turn.current
+    /** Superseded in its own session: stop everything. */
+    const gone = () => sessionTurn.current.get(sid) !== mineHere
+    /** No longer the voiced turn (or superseded): stay quiet, keep writing. */
+    const stale = () => gone() || mine !== turn.current
 
     clearIdle()
     const s = store.getState()
@@ -214,7 +234,19 @@ export default function App() {
     s.clearPanels()
     s.clearBlades()
     s.setCaption('')
-    s.pushTurn({ id: newId(), role: 'user', text: said })
+    s.pushTurn({ id: newId(), role: 'user', text: said }, sid)
+    /**
+     * The chat view: the answer is read on screen, so the model is told to
+     * write it out in full (formatted), and only its opening line is spoken.
+     * Checked as the answer streams too — a long answer can switch the view
+     * on part way through.
+     */
+    const inChat = () => Boolean(store.getState().sessions.find((x) => x.id === sid)?.chat)
+    const asked = retry ? `Answer this again, differently and better than your last answer to it: ${said}` : said
+    const request = inChat() ? `[Chat] ${asked}` : asked
+    let heard = ''
+    let speaking = true
+    s.setSessionBusy(sid, true)
     s.setPhase('thinking')
 
     const spk = createSpeaker()
@@ -227,20 +259,40 @@ export default function App() {
     let filled = false
 
     try {
-      const { text } = await ask(said, history.current, {
+      const { text } = await ask(request, history.current, {
         onText: (delta) => {
-          if (stale()) return
+          if (gone()) return
+          // The answer is written into its session either way; only the
+          // voiced turn speaks it and moves the orb.
           if (!started) {
             started = true
-            if (!stale()) lastAsk.current.answered = true
-            store.getState().setPhase('speaking')
-            // The answer arriving is what ends the tool phase — a timer would
-            // clear the readout while a slow tool was still running.
-            store.getState().setActiveTool(null)
-            music.working(false)
-            store.getState().pushTurn({ id: turnId, role: 'jarvis', text: '' })
+            store.getState().pushTurn({ id: turnId, role: 'jarvis', text: '' }, sid)
+            if (!stale()) {
+              lastAsk.current.answered = true
+              store.getState().setPhase('speaking')
+              // The answer arriving is what ends the tool phase — a timer would
+              // clear the readout while a slow tool was still running.
+              store.getState().setActiveTool(null)
+              music.working(false)
+            }
           }
-          store.getState().appendToLastTurn(delta)
+          store.getState().appendToLastTurn(delta, sid)
+          if (stale() || !speaking) return
+          // In the chat view only the opening line is spoken: up to the
+          // first line break (or ~300 characters); the rest is for reading.
+          if (inChat()) {
+            const cut = delta.indexOf('\n')
+            if (cut >= 0 && (heard + delta.slice(0, cut)).trim()) {
+              spk.push(delta.slice(0, cut))
+              speaking = false
+              return
+            }
+            if (heard.length > 300) {
+              speaking = false
+              return
+            }
+          }
+          heard += delta
           spk.push(delta)
         },
         onTool: (name) => {
@@ -261,7 +313,14 @@ export default function App() {
             spk.say(forTool(name))
           }
         },
-      })
+      }, sid)
+
+      // A background session's answer may have arrived only as the final
+      // text (no stream): file it there.
+      if (!gone() && !started && text) {
+        store.getState().pushTurn({ id: turnId, role: 'jarvis', text }, sid)
+        started = true
+      }
 
       if (stale()) return
 
@@ -279,13 +338,18 @@ export default function App() {
       if (stale()) return
       sfx.play('done')
     } catch (err) {
-      if (stale()) return
+      if (gone()) return
       console.error(err)
+      const why = err instanceof Error ? err.message : 'Something went wrong.'
+      // A background session's failure is noted in that session instead.
+      if (stale()) {
+        store.getState().pushTurn({ id: newId(), role: 'jarvis', text: `⚠ ${why}` }, sid)
+        return
+      }
       sfx.play('error')
-      store
-        .getState()
-        .setError(err instanceof Error ? err.message : 'Something went wrong.')
+      store.getState().setError(why)
     } finally {
+      if (!gone()) store.getState().setSessionBusy(sid, false)
       if (!stale()) {
         speaker.current = null
         sfx.duck(false)
@@ -941,6 +1005,74 @@ export default function App() {
    * not retry — so a refusal leaves the old screen rather than a loop.
    * VITE_AUTOSTART=off brings the button back for good.
    */
+  /**
+   * "Read aloud" in the chat view: the whole answer, spoken (code and tables
+   * are left to the screen). Pressing it again — or anything else he says or
+   * hears — stops it. 'jarvis-read-done' tells the button it has finished.
+   */
+  useEffect(() => {
+    const done = () => window.dispatchEvent(new Event('jarvis-read-done'))
+    const read = (e: Event) => {
+      const text = String((e as CustomEvent<string>).detail ?? '')
+        .replace(/```[\s\S]*?(```|$)/g, '\n(The code is on screen.)\n')
+        .replace(/^\s*\|.*\|\s*$/gm, '')
+      if (!text.trim()) return
+      silence()
+      const s = createSpeaker()
+      speaker.current = s
+      s.push(text)
+      void s.end().then(() => {
+        if (speaker.current === s) speaker.current = null
+        done()
+      })
+    }
+    const stop = () => {
+      silence()
+      done()
+    }
+    window.addEventListener('jarvis-read', read)
+    window.addEventListener('jarvis-read-stop', stop)
+    return () => {
+      window.removeEventListener('jarvis-read', read)
+      window.removeEventListener('jarvis-read-stop', stop)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /**
+   * Switching sessions: the voice stops (the answer it was reading belongs to
+   * the other session, which carries on working and writing in the
+   * background), and the orb settles. Closing one also ends its agent in the
+   * bridge, and anything still on its way for it is dropped.
+   */
+  useEffect(
+    () =>
+      useStore.subscribe((s, prev) => {
+        if (s.activeSession !== prev.activeSession) {
+          turn.current++
+          silence()
+          clearIdle()
+          s.setCaption('')
+          s.setActiveTool(null)
+          s.setError(null)
+          music.working(false)
+          music.duck(false)
+          sfx.duck(false)
+          const p = s.phase
+          if (p === 'thinking' || p === 'tooling' || p === 'speaking') s.setPhase('dormant')
+        }
+        if (s.sessions !== prev.sessions) {
+          for (const old of prev.sessions) {
+            if (s.sessions.some((x) => x.id === old.id)) continue
+            sessionTurn.current.set(old.id, (sessionTurn.current.get(old.id) ?? 0) + 1)
+            endSession(old.id)
+          }
+        }
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
+
   useEffect(() => {
     if (String(import.meta.env.VITE_AUTOSTART ?? '').trim().toLowerCase() === 'off') return
     const t = window.setTimeout(() => {

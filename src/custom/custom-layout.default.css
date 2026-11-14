@@ -47,7 +47,9 @@ body {
 .vg-panel,
 .vg-rail,
 .vg-ask,
-.vg-convo {
+.vg-convo,
+.vg-chatview,
+.vg-reactor-mini {
   pointer-events: auto;
 }
 .vg-root button {
@@ -906,6 +908,322 @@ body {
 }
 
 .vg-weather { flex: 1; }
+
+/* ------------------------------------------------------------ sessions */
+/* Where Quick Actions was: the conversations, newest first. It takes the
+   room in the column; the weather below keeps its own size. */
+.vg-right .vg-weather { flex: none; }
+.vg-sessions {
+  flex: 1 1 0;
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+}
+.vg-sessions .vg-ph-extra {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.vg-ses-count {
+  color: var(--accent);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+}
+.vg-ses-new {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  color: var(--accent) !important;
+  border: 1px solid var(--edge-hi) !important;
+  background: rgba(63, 182, 255, 0.08) !important;
+  transition: all 0.2s var(--ease);
+}
+.vg-ses-new:hover {
+  color: #fff !important;
+  background: rgba(63, 182, 255, 0.22) !important;
+  box-shadow: 0 0 14px rgba(31, 120, 255, 0.35);
+}
+.vg-ses-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0 -6px;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.vg-ses-list li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  transition: background 0.2s, border-color 0.2s;
+}
+.vg-ses-list li + li { margin-top: 3px; }
+.vg-ses-list li:hover { background: rgba(63, 182, 255, 0.07); }
+.vg-ses-list li.vg-ses-on {
+  border-color: var(--edge-hi);
+  background: linear-gradient(90deg, rgba(63, 182, 255, 0.16), rgba(31, 120, 255, 0.04));
+}
+.vg-ses-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px 8px 10px;
+  text-align: left;
+}
+.vg-ses-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  opacity: 0.6;
+}
+.vg-ses-on .vg-ses-dot { background: var(--accent); opacity: 1; box-shadow: 0 0 8px var(--accent); }
+/* Working: a ring that turns. */
+.vg-ses-busy .vg-ses-dot {
+  width: 10px;
+  height: 10px;
+  background: none;
+  opacity: 1;
+  border: 2px solid rgba(63, 182, 255, 0.25);
+  border-top-color: var(--accent);
+  animation: vg-ses-spin 0.9s linear infinite;
+}
+@keyframes vg-ses-spin { to { transform: rotate(360deg); } }
+.vg-ses-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.vg-ses-on .vg-ses-title { color: var(--ink); }
+.vg-ses-open small {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+.vg-ses-busy .vg-ses-open small { color: var(--accent); }
+.vg-ses-x {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 4px;
+  border-radius: 7px;
+  color: var(--ink-3) !important;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.2s;
+}
+.vg-ses-list li:hover .vg-ses-x,
+.vg-ses-x:focus-visible { opacity: 1; }
+.vg-ses-x:hover { color: #ffb4b4 !important; background: rgba(255, 90, 100, 0.14) !important; }
+
+/* "View calendar", top right of the Local Time box. */
+.vg-cal-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--edge-hi) !important;
+  background: rgba(63, 182, 255, 0.08) !important;
+  color: var(--accent) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  transition: all 0.2s var(--ease);
+}
+.vg-cal-open:hover,
+.vg-cal-open.vg-on {
+  color: #fff !important;
+  background: rgba(63, 182, 255, 0.22) !important;
+  box-shadow: 0 0 12px rgba(31, 120, 255, 0.3);
+}
+.vg-cal .vg-ph-extra { display: flex; gap: 6px; }
+
+/* ---------------------------------------------------------- model usage */
+.vg-usage {
+  flex: 1 1 0;
+  min-height: 170px;
+  display: flex;
+  flex-direction: column;
+}
+.vg-use-tabs {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  border: 1px solid var(--edge);
+  background: rgba(5, 16, 38, 0.6);
+}
+.vg-use-tabs button {
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 10.5px !important;
+  color: var(--ink-3) !important;
+}
+.vg-use-tabs button.vg-on {
+  color: #fff !important;
+  background: rgba(63, 182, 255, 0.25) !important;
+}
+.vg-use-now {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.vg-use-now i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4ee6a8;
+  box-shadow: 0 0 8px #4ee6a8;
+}
+.vg-use-now b { color: var(--ink); font-weight: 600; }
+.vg-use-now small {
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--edge);
+  font-size: 10px;
+}
+.vg-use-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.vg-use-list li + li { margin-top: 10px; }
+.vg-use-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+}
+.vg-use-name { color: var(--ink-2); }
+.vg-use-active .vg-use-name { color: var(--ink); font-weight: 600; }
+.vg-use-tag {
+  padding: 0 6px;
+  border-radius: 5px;
+  font-style: normal;
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #4ee6a8;
+  border: 1px solid rgba(78, 230, 168, 0.35);
+}
+.vg-use-tag.vg-use-rest { color: #ffc46b; border-color: rgba(255, 196, 107, 0.35); }
+.vg-use-num {
+  margin-left: auto;
+  font: 500 11px 'JetBrains Mono', ui-monospace, monospace;
+  color: var(--ink-2);
+}
+.vg-use-bar {
+  height: 4px;
+  margin-top: 5px;
+  border-radius: 3px;
+  background: rgba(63, 182, 255, 0.1);
+  overflow: hidden;
+}
+.vg-use-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  box-shadow: 0 0 8px var(--accent);
+  transition: width 0.6s var(--ease);
+}
+.vg-use-detail {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+.vg-use-list li + li {
+  padding-top: 10px;
+  border-top: 1px solid rgba(120, 180, 255, 0.08);
+}
+.vg-use-note {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--ink-3);
+  text-align: right;
+}
+/* One limit: "Session (5hr) 54%", its bar, and when it resets. */
+.vg-use-meter { margin-top: 8px; }
+.vg-use-mrow {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.vg-use-mrow b {
+  font: 600 12px 'JetBrains Mono', ui-monospace, monospace;
+  color: var(--ink);
+}
+.vg-use-meter .vg-use-bar { height: 6px; margin-top: 5px; }
+.vg-use-meter small {
+  display: block;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+.vg-use-meter.vg-warm .vg-use-bar span { background: linear-gradient(90deg, #d98a1f, #ffc46b); box-shadow: 0 0 8px rgba(255, 196, 107, 0.6); }
+.vg-use-meter.vg-hot .vg-use-bar span { background: linear-gradient(90deg, #d0313d, #ff7b86); box-shadow: 0 0 8px rgba(255, 110, 120, 0.6); }
+.vg-use-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.vg-use-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--edge);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+/* Quick actions, now on the rail under a thin line. */
+.vg-rail-sep {
+  width: 24px;
+  height: 1px;
+  margin: 4px 0;
+  background: var(--edge-hi);
+  opacity: 0.6;
+}
+.vg-rail > button.vg-rail-quick { color: var(--accent); opacity: 0.85; }
+.vg-rail > button.vg-rail-quick:hover { opacity: 1; color: #fff; }
+/* Short windows: the rail's buttons close up so all of them fit. */
+@media (max-height: 820px) {
+  .vg-rail { gap: 4px; padding: 10px 0; }
+  .vg-rail > button { width: 40px; height: 40px; }
+}
+
+/* A long hint (the muted one) stays on one line, cut short, instead of
+   wrapping to a second line with a scrollbar. */
+.vg-ask textarea:placeholder-shown {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .vg-wx-main {
   display: flex;
   align-items: center;
@@ -988,16 +1306,26 @@ body {
   height: 22px;
   flex: none;
 }
-.vg-ask input {
+.vg-ask input,
+.vg-ask textarea {
   flex: 1;
-  height: 100%;
   background: none;
   border: 0;
   outline: none;
   color: var(--ink);
-  font: 400 14px 'Inter', sans-serif;
+  font: 400 14px/1.45 'Inter', sans-serif;
 }
-.vg-ask input::placeholder { color: var(--ink-3); }
+.vg-ask input { height: 100%; }
+/* One line to start; Shift+Enter adds lines (up to ~5, then it scrolls). */
+.vg-ask textarea {
+  resize: none;
+  max-height: 120px;
+  padding: 10px 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.vg-ask input::placeholder,
+.vg-ask textarea::placeholder { color: var(--ink-3); }
 .vg-mic,
 .vg-send {
   display: grid;
@@ -1690,7 +2018,8 @@ button.vg-avatar.vg-avatar-on { box-shadow: 0 0 0 2px rgba(63, 182, 255, 0.7), 0
   .vg-ask .vg-ask-wave { display: none; }
   .vg-brain select { max-width: 104px; padding-right: 24px; }
   /* Everything in the ask bar fits: the text box gives way, the buttons shrink a little. */
-  .vg-ask input { min-width: 0; flex: 1 1 0; }
+  .vg-ask input,
+  .vg-ask textarea { min-width: 0; flex: 1 1 0; }
   .vg-ask > button { width: 40px; height: 40px; flex: none; }
   .vg-left { grid-column: 1; grid-row: 5; }
   .vg-right { grid-column: 1; grid-row: 6; }
@@ -1703,3 +2032,366 @@ button.vg-avatar.vg-avatar-on { box-shadow: 0 0 0 2px rgba(63, 182, 255, 0.7), 0
 @media (max-height: 640px) and (max-width: 1100px) {
   .vg-reactor { height: min(60vh, 56vw); }
 }
+/* ============================================================ chat view */
+/* Written answers: the centre becomes a chat (like a chat app, in JARVIS's
+   style) and the orb glides, shrinking, to the top-right corner. */
+.vg-centre { position: relative; }
+.vg-r-text,
+.vg-pad,
+.vg-halo { transition: opacity 0.6s var(--ease); }
+.vg-chat .vg-centre {
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+  justify-items: stretch;
+}
+.vg-chat .vg-reactor.vg-reactor-mini {
+  position: absolute;
+  top: -2px;
+  right: 4px;
+  height: 90px;
+  width: auto;
+  max-height: none;
+  margin: 0;
+  z-index: 4;
+  cursor: pointer;
+}
+.vg-reactor-mini .vg-r-text,
+.vg-reactor-mini .vg-pad { opacity: 0; pointer-events: none; }
+.vg-reactor-mini .vg-halo { opacity: 0.6; }
+.vg-reactor-mini:hover { filter: brightness(1.25); }
+.vg-reactor-mini:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 50%; }
+
+.vg-chatview {
+  grid-row: 1 / -1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  animation: vg-fade 0.7s ease both 0.35s;
+}
+.vg-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 92px;
+  padding: 8px 116px 8px 8px;
+  border-bottom: 1px solid var(--edge);
+  color: var(--accent);
+}
+.vg-chat-head h2 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: 600 15px 'Inter', sans-serif;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.vg-chat-orb {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 6px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--edge-hi) !important;
+  background: rgba(63, 182, 255, 0.08) !important;
+  color: var(--accent) !important;
+  font-size: 11.5px !important;
+  transition: all 0.2s var(--ease);
+}
+.vg-chat-orb:hover { color: #fff !important; background: rgba(63, 182, 255, 0.2) !important; }
+.vg-chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 180, 255, 0.25) transparent;
+  mask-image: linear-gradient(to bottom, transparent 0, #000 16px, #000 calc(100% - 10px), transparent 100%);
+}
+.vg-chat-list {
+  max-width: 840px;
+  margin: 0 auto;
+  padding: 20px 10px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.vg-chat-empty {
+  margin-top: 12vh;
+  text-align: center;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.vg-cm { position: relative; animation: vg-rise 0.45s var(--ease) both; }
+.vg-cm-user {
+  align-self: flex-end;
+  max-width: 78%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.vg-cm-bubble {
+  padding: 10px 15px;
+  border-radius: 16px 16px 4px 16px;
+  border: 1px solid var(--edge-hi);
+  background: linear-gradient(135deg, rgba(63, 182, 255, 0.22), rgba(31, 120, 255, 0.1));
+  box-shadow: 0 0 18px rgba(31, 120, 255, 0.15);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.vg-cm-ai { align-self: stretch; }
+.vg-cm-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font: 600 10.5px 'JetBrains Mono', monospace;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.vg-cm-copy {
+  margin-top: 4px;
+  padding: 3px 9px;
+  border-radius: 7px;
+  font-size: 11px !important;
+  color: var(--ink-3) !important;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.2s;
+}
+.vg-cm:hover .vg-cm-copy,
+.vg-cm-copy:focus-visible { opacity: 1; }
+.vg-cm-copy:hover { color: var(--ink) !important; background: rgba(63, 182, 255, 0.12) !important; }
+
+/* The written answer itself. */
+.vg-md {
+  font-size: 14.5px;
+  line-height: 1.7;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.vg-md > :first-child { margin-top: 0; }
+.vg-md > :last-child { margin-bottom: 0; }
+.vg-md p { margin: 0 0 0.85em; }
+.vg-md h2,
+.vg-md h3,
+.vg-md h4 {
+  margin: 1.3em 0 0.5em;
+  font-family: 'Inter', sans-serif;
+  font-weight: 650;
+  line-height: 1.3;
+  color: #f2f9ff;
+}
+.vg-md h2 { font-size: 19px; }
+.vg-md h3 { font-size: 16.5px; }
+.vg-md h4 { font-size: 15px; color: var(--accent); }
+.vg-md strong { color: #fff; }
+.vg-md a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.vg-md ul,
+.vg-md ol { margin: 0 0 0.9em; padding-left: 1.5em; }
+.vg-md li { margin: 0.25em 0; }
+.vg-md li.md-sub { margin-left: 1.4em; }
+.vg-md li::marker { color: var(--accent); }
+.vg-md blockquote {
+  margin: 0 0 0.9em;
+  padding: 4px 14px;
+  border-left: 3px solid var(--accent);
+  color: var(--ink-2);
+  background: rgba(63, 182, 255, 0.06);
+  border-radius: 0 8px 8px 0;
+}
+.vg-md hr { border: 0; border-top: 1px solid var(--edge); margin: 1.2em 0; }
+.vg-md code {
+  padding: 1px 6px;
+  border-radius: 5px;
+  font: 500 0.88em 'JetBrains Mono', ui-monospace, monospace;
+  color: #bfe6ff;
+  background: rgba(63, 182, 255, 0.12);
+}
+.vg-md pre {
+  position: relative;
+  margin: 0 0 1em;
+  padding: 34px 16px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--edge);
+  background: rgba(2, 8, 22, 0.85);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.vg-md pre::before {
+  content: attr(data-lang);
+  position: absolute;
+  top: 8px;
+  left: 14px;
+  font: 600 10px 'JetBrains Mono', monospace;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.vg-md pre code {
+  padding: 0;
+  background: none;
+  color: #d8ecff;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre;
+}
+.vg-md .md-copy {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 10.5px !important;
+  color: var(--ink-3) !important;
+  border: 1px solid var(--edge) !important;
+  background: rgba(10, 26, 58, 0.8) !important;
+}
+.vg-md .md-copy:hover { color: #fff !important; border-color: var(--edge-hi) !important; }
+.vg-md .md-table { margin: 0 0 1em; overflow-x: auto; }
+.vg-md table { border-collapse: collapse; font-size: 13.5px; min-width: 60%; }
+.vg-md th,
+.vg-md td { padding: 7px 12px; border: 1px solid var(--edge); text-align: left; vertical-align: top; }
+.vg-md th { color: var(--accent); background: rgba(63, 182, 255, 0.08); font-weight: 600; }
+.vg-md input[type='checkbox'] { accent-color: var(--accent); margin-right: 4px; }
+/* Still arriving: a caret at the end. */
+.vg-cm-live .vg-md > :last-child::after {
+  content: '▍';
+  margin-left: 2px;
+  color: var(--accent);
+  animation: vg-caret 1s steps(2) infinite;
+}
+@keyframes vg-caret { 50% { opacity: 0; } }
+.vg-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--ink-3);
+  text-transform: capitalize;
+}
+.vg-typing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: vg-dot 1.2s ease-in-out infinite;
+}
+.vg-typing i:nth-child(2) { animation-delay: 0.15s; }
+.vg-typing i:nth-child(3) { animation-delay: 0.3s; margin-right: 6px; }
+@keyframes vg-dot { 0%, 80%, 100% { opacity: 0.25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) {
+  .vg-typing i,
+  .vg-cm-live .vg-md > :last-child::after { animation: none; }
+}
+/* The orb view's preview of a written answer, and the way into the chat. */
+.vg-open-chat {
+  margin-left: 8px;
+  padding: 1px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--edge-hi) !important;
+  background: rgba(63, 182, 255, 0.1) !important;
+  color: var(--accent) !important;
+  font-size: 11px !important;
+  white-space: nowrap;
+}
+.vg-open-chat:hover { color: #fff !important; background: rgba(63, 182, 255, 0.22) !important; }
+
+/* Under a finished answer, on the left: copy, read aloud, thumbs, retry. */
+.vg-acts { margin-top: 10px; }
+.vg-acts-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.vg-acts-row button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--ink-3) !important;
+  transition: color 0.15s, background 0.15s;
+}
+.vg-acts-row button:hover {
+  color: var(--ink) !important;
+  background: rgba(63, 182, 255, 0.12) !important;
+}
+.vg-acts-row button.vg-on {
+  color: var(--accent) !important;
+  background: rgba(63, 182, 255, 0.14) !important;
+}
+.vg-acts-row button.vg-on.vg-bad {
+  color: #ff8a94 !important;
+  background: rgba(255, 90, 100, 0.12) !important;
+}
+.vg-acts-row button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.vg-acts-note {
+  margin-left: 6px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  animation: vg-fade 0.3s ease both;
+}
+.vg-acts-why {
+  display: flex;
+  gap: 6px;
+  max-width: 520px;
+  margin-top: 6px;
+  animation: vg-rise 0.3s var(--ease) both;
+}
+.vg-acts-why input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--edge-hi);
+  background: rgba(4, 14, 34, 0.85);
+  color: var(--ink);
+  font: 13px 'Inter', sans-serif;
+  outline: none;
+}
+.vg-acts-why input:focus { border-color: var(--accent); }
+.vg-acts-why button {
+  padding: 0 12px;
+  border-radius: 9px;
+  font-size: 12px !important;
+  color: var(--ink-2) !important;
+  border: 1px solid var(--edge) !important;
+}
+.vg-acts-why button[type='submit'] {
+  color: #fff !important;
+  border-color: var(--edge-hi) !important;
+  background: rgba(63, 182, 255, 0.22) !important;
+}
+
+/* The ask bar grows upward with its text (Shift+Enter lines), like a chat
+   app's box, instead of the text spilling out of a one-line bar. Everything
+   else in it stays on the bottom line. */
+.vg-ask {
+  align-self: end;
+  height: auto;
+  min-height: 100%;
+  align-items: flex-end;
+  padding-top: 9px;
+  padding-bottom: 9px;
+  z-index: 7;
+  /* Solid enough that the conversation it grows over doesn't show through. */
+  background: linear-gradient(90deg, rgba(8, 24, 56, 0.97), rgba(4, 12, 30, 0.98));
+  backdrop-filter: blur(12px);
+}
+.vg-ask textarea {
+  align-self: flex-end;
+  margin-bottom: 3px;
+  padding: 10px 0;
+  overflow-y: hidden; /* a scrollbar only past ~5 lines (set as it grows) */
+}
+.vg-ask .vg-brain { margin-bottom: 5px; }
+.vg-ask .vg-ask-wave { margin-bottom: 12px; }

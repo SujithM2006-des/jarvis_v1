@@ -39,6 +39,8 @@ const DEFAULTS = {
   features: Object.fromEntries(FEATURES.map((f) => [f, true])),
   theme: 'blue',
   orb: 'reactor',
+  /** Gmail, Calendar & Drive (claude.ai account connectors): off — they cost usage on every request. */
+  connectors: false,
 }
 
 /** The saved profile, with defaults filled in; `configured` is false until setup has run. */
@@ -81,7 +83,7 @@ export function saveProfile(input) {
   const theme = Object.hasOwn(THEMES, input?.theme) ? input.theme : 'blue'
   const features = Object.fromEntries(FEATURES.map((f) => [f, input?.features?.[f] !== false]))
   const orb = ORBS.includes(input?.orb) ? input.orb : 'reactor'
-  const out = { name, city: nameCase(clean(input?.city, 60)), assistant, features, theme, orb }
+  const out = { name, city: nameCase(clean(input?.city, 60)), assistant, features, theme, orb, connectors: input?.connectors === true }
   mkdirSync(join(homedir(), '.jarvis'), { recursive: true })
   writeFileSync(FILE, JSON.stringify(out, null, 2))
   return readProfile()

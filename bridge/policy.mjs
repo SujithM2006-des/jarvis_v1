@@ -185,6 +185,10 @@ export function decideTool(name, allowWrites = false) {
     // folders and routines change things, so they need writes.
     if (server === 'jarvis_extras') return EXTRA_WRITE_TOOLS.has(tool) ? allowWrites : true
 
+    // Reviewing a pasted social/video link (downloads only into a temporary
+    // folder) and logging in to a site in his own browser window: read-only.
+    if (server === 'jarvis_social') return true
+
     // Customising his own look and voice. Restyling writes a stylesheet into
     // the project, so it needs allowWrites; measuring a recording and setting
     // the voice only touch the browser's own settings.

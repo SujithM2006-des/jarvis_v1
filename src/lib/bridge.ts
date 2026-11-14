@@ -413,13 +413,29 @@ export async function warmBridge(): Promise<void> {
  */
 const IDLE_TIMEOUT_MS = 120_000
 
-/** The turn in flight, so a barge-in can settle it locally. */
-let pending: { finish: (fallback?: string) => void } | null = null
+/**
+ * The turn in flight in each session, so a barge-in can settle it locally.
+ * Sessions run side by side in the bridge (one agent each), so a new question
+ * supersedes only the one in its own session.
+ */
+const inFlight = new Map<string, { finish: (fallback?: string) => void }>()
+
+/** The session asked most recently: the one a bare cancel() (a barge-in) stops. */
+let foreground = 'main'
+
+/** Close a session's agent in the bridge (its process and memory). */
+export function endSession(session: string): void {
+  inFlight.get(session)?.finish()
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'end-session', session }))
+}
 
 export async function ask(
   prompt: string,
   handlers: AskHandlers,
+  session = 'main',
 ): Promise<{ text: string; tools: string[] }> {
+  foreground = session
+  const pending = inFlight.get(session) ?? null
   /**
    * A new question supersedes the one in flight.
    *
@@ -442,28 +458,32 @@ export async function ask(
    * below claims the slot there is nothing left to collide with. The abandoned
    * turn's caller sees its own `stale()` check and stands down quietly.
    */
-  if (pending) cancel()
+  if (pending) cancel(session)
 
   // Claim the slot in this same tick. connect() below awaits, and two calls
   // made before it settles would otherwise both sail past the check above.
   let cancelledWhileDialling = false
-  pending = {
+  const dialling = {
     finish: () => {
       cancelledWhileDialling = true
     },
+  }
+  inFlight.set(session, dialling)
+  const release = (mine: unknown) => {
+    if (inFlight.get(session) === mine) inFlight.delete(session)
   }
 
   let ws: WebSocket
   try {
     ws = await connect()
   } catch (err) {
-    pending = null
+    release(dialling)
     throw err
   }
 
   // Barged in on before the socket was even up. Nothing was ever asked.
   if (cancelledWhileDialling) {
-    pending = null
+    release(dialling)
     return { text: '', tools: [] }
   }
 
@@ -477,7 +497,7 @@ export async function ask(
 
     const cleanup = () => {
       done = true
-      pending = null
+      release(slot)
       clearTimeout(timer)
       ws.removeEventListener('message', onMessage)
       ws.removeEventListener('close', onClose)
@@ -563,14 +583,15 @@ export async function ask(
       fail(new Error('The connection to the bridge failed.'))
     }
 
-    pending = { finish }
+    const slot = { finish }
+    inFlight.set(session, slot)
     ws.addEventListener('message', onMessage)
     ws.addEventListener('close', onClose)
     ws.addEventListener('error', onError)
     arm()
 
     try {
-      ws.send(JSON.stringify({ type: 'ask', text: prompt, id }))
+      ws.send(JSON.stringify({ type: 'ask', text: prompt, id, session }))
     } catch (err) {
       // The socket can go into CLOSING between connect() resolving and here.
       fail(err instanceof Error ? err : new Error(String(err)))
@@ -586,11 +607,11 @@ export async function ask(
  * already said is returned, so the caller's await always comes back and the
  * transcript keeps the half-sentence the user actually heard.
  */
-export function cancel(): void {
+export function cancel(session = foreground): void {
   if (socket?.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'interrupt' }))
+    socket.send(JSON.stringify({ type: 'interrupt', session }))
   }
-  pending?.finish()
+  inFlight.get(session)?.finish()
 }
 
 /** The older name for `cancel()`. */

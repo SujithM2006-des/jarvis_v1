@@ -49,6 +49,9 @@ function prefer(ids, prefs) {
  * best first — so a retired model never breaks them.
  */
 const resolved = {}
+
+/** The model a provider is served with (for the usage meters), or null. */
+export const resolvedModel = (id) => readKeys()[id]?.model || resolved[id] || null
 async function resolveModels(keys) {
   if (keys.openrouter?.key && !keys.openrouter.model) {
     try {

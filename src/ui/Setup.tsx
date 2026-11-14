@@ -351,6 +351,12 @@ export function Setup() {
                   <small>{f.note}</small>
                 </label>
               ))}
+              {/* Off by default: their many tools are sent with every request. */}
+              <label className={`su-feat ${form.connectors ? 'su-on' : ''}`}>
+                <input type="checkbox" checked={form.connectors === true} onChange={(e) => set({ connectors: e.target.checked })} />
+                <b>Gmail, Calendar & Drive</b>
+                <small>Through your Claude account — uses more of your Claude usage</small>
+              </label>
             </div>
           </div>
 

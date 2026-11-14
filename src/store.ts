@@ -58,6 +58,8 @@ export type Turn = {
   text: string
   /** Tool names invoked while producing this turn, for the HUD readout. */
   tools?: string[]
+  /** Thumbs up or down from the chat view. */
+  feedback?: 'up' | 'down'
 }
 
 /**
@@ -258,8 +260,24 @@ type State = {
   setActiveTool: (t: string | null) => void
   setError: (e: string | null) => void
   setConnected: (c: string[]) => void
-  pushTurn: (t: Turn) => void
-  appendToLastTurn: (text: string) => void
+  /** `sid`: the session it belongs to (default: the one on screen). */
+  pushTurn: (t: Turn, sid?: string) => void
+  appendToLastTurn: (text: string, sid?: string) => void
+
+  /** Conversations, newest first. `turns` above is the active one's. */
+  sessions: Session[]
+  activeSession: string
+  /** Start a new session and show it; returns its id. */
+  newSession: () => string
+  switchSession: (id: string) => void
+  closeSession: (id: string) => void
+  setSessionBusy: (id: string, busy: boolean) => void
+  /** Chat view on or off for a session (default: the one on screen). */
+  setChat: (on: boolean, id?: string) => void
+  /** Thumbs up/down (or none) on a turn of the session on screen. */
+  setFeedback: (turnId: string, vote: 'up' | 'down' | null) => void
+  /** Remove a turn and everything after it from the session on screen (retry). */
+  dropFrom: (turnId: string) => void
 
   applyUi: (patch: UiPatch) => void
   addOrbit: (o: OrbitObject) => void
@@ -270,11 +288,74 @@ type State = {
   clearScreen: (what: 'all' | 'panels' | 'transcript') => void
 }
 
-export const useStore = create<State>((set) => ({
+/**
+ * Sessions: separate conversations, each with its own agent in the bridge, so
+ * one can be making a video while another answers a question. Kept in this
+ * browser (localStorage) so the list survives a reload; the agents behind
+ * them start afresh then (the journal still gives them the recent talk).
+ */
+export type Session = {
+  id: string
+  /** From the first request ("New session" until there is one). */
+  title: string
+  turns: Turn[]
+  /** A request in this session is being worked on. */
+  busy: boolean
+  /** Last activity (ms). */
+  at: number
+  /** Shown as a chat (written answers, full transcript) rather than the orb view. */
+  chat?: boolean
+}
+
+const NEW_TITLE = 'New session'
+const MAX_SESSIONS_KEPT = 30
+const SESSIONS_KEY = 'jarvis-sessions'
+
+const blankSession = (id = `s${Date.now().toString(36)}`): Session => ({ id, title: NEW_TITLE, turns: [], busy: false, at: Date.now() })
+
+/** A short title from a request: its first words, without a leading "Jarvis". */
+function titleFrom(text: string): string {
+  const t = text
+    .replace(/^\[.*?\]\s*/, '')
+    .replace(/^(hey |ok |okay )?jarvis[,\s]*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!t) return NEW_TITLE
+  const short = t.length > 42 ? `${t.slice(0, 40).replace(/\s+\S*$/, '')}…` : t
+  return short[0].toUpperCase() + short.slice(1)
+}
+
+/** Apply `fn` to one session; keep `turns` in step when it is the one on screen. */
+function inSession(s: State, sid: string, fn: (x: Session) => Session): Partial<State> {
+  let hit: Session | null = null
+  const sessions = s.sessions.map((x) => (x.id === sid ? (hit = fn(x)) : x))
+  if (!hit) return {}
+  return sid === s.activeSession ? { sessions, turns: (hit as Session).turns } : { sessions }
+}
+
+function loadSessions(): { sessions: Session[]; activeSession: string } {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SESSIONS_KEY) ?? 'null')
+    if (saved && Array.isArray(saved.sessions) && saved.sessions.length) {
+      // Nothing is being worked on after a reload.
+      const sessions = (saved.sessions as Session[]).map((x) => ({ ...x, busy: false }))
+      const active = sessions.some((x) => x.id === saved.activeSession) ? saved.activeSession : sessions[0].id
+      return { sessions, activeSession: active }
+    }
+  } catch {
+    /* storage unavailable or damaged: start fresh */
+  }
+  return { sessions: [blankSession('main')], activeSession: 'main' }
+}
+
+const initialSessions = loadSessions()
+
+export const useStore = create<State>((set, get) => ({
   phase: 'offline',
   level: 0,
   caption: '',
-  turns: [],
+  ...initialSessions,
+  turns: initialSessions.sessions.find((x) => x.id === initialSessions.activeSession)?.turns ?? [],
   activeTool: null,
   error: null,
   connected: [],
@@ -352,15 +433,67 @@ export const useStore = create<State>((set) => ({
   setActiveTool: (activeTool) => set({ activeTool }),
   setError: (error) => set({ error }),
   setConnected: (connected) => set({ connected }),
-  pushTurn: (turn) => set((s) => ({ turns: [...s.turns.slice(-40), turn] })),
-  appendToLastTurn: (text) =>
+  pushTurn: (turn, sid) =>
+    set((s) =>
+      inSession(s, sid ?? s.activeSession, (x) => ({
+        ...x,
+        // A session is named after its first request.
+        title: x.title.startsWith(NEW_TITLE) && !x.turns.length && turn.role === 'user' ? titleFrom(turn.text) : x.title,
+        turns: [...x.turns.slice(-40), turn],
+        at: Date.now(),
+      })),
+    ),
+  appendToLastTurn: (text, sid) =>
+    set((s) =>
+      inSession(s, sid ?? s.activeSession, (x) => {
+        const turns = [...x.turns]
+        const last = turns[turns.length - 1]
+        if (!last || last.role !== 'jarvis') return x
+        turns[turns.length - 1] = { ...last, text: last.text + text }
+        return { ...x, turns }
+      }),
+    ),
+
+  newSession: () => {
+    const s = get()
+    // Always a new one, at the top. Numbered while untitled, so two new ones
+    // can be told apart until each gets its first request.
+    const untitled = s.sessions.filter((x) => x.title.startsWith(NEW_TITLE)).length
+    const fresh = { ...blankSession(`s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`), title: untitled ? `${NEW_TITLE} ${untitled + 1}` : NEW_TITLE }
+    set({ sessions: [fresh, ...s.sessions].slice(0, MAX_SESSIONS_KEPT), activeSession: fresh.id, turns: [] })
+    return fresh.id
+  },
+  switchSession: (id) =>
     set((s) => {
-      const turns = [...s.turns]
-      const last = turns[turns.length - 1]
-      if (!last || last.role !== 'jarvis') return {}
-      turns[turns.length - 1] = { ...last, text: last.text + text }
-      return { turns }
+      const to = s.sessions.find((x) => x.id === id)
+      return to ? { activeSession: id, turns: to.turns } : {}
     }),
+  closeSession: (id) =>
+    set((s) => {
+      const rest = s.sessions.filter((x) => x.id !== id)
+      if (!rest.length) {
+        const fresh = blankSession()
+        return { sessions: [fresh], activeSession: fresh.id, turns: [] }
+      }
+      if (s.activeSession !== id) return { sessions: rest }
+      return { sessions: rest, activeSession: rest[0].id, turns: rest[0].turns }
+    }),
+  setSessionBusy: (id, busy) => set((s) => inSession(s, id, (x) => ({ ...x, busy }))),
+  setChat: (on, id) => set((s) => inSession(s, id ?? s.activeSession, (x) => (Boolean(x.chat) === on ? x : { ...x, chat: on }))),
+  setFeedback: (turnId, vote) =>
+    set((s) =>
+      inSession(s, s.activeSession, (x) => ({
+        ...x,
+        turns: x.turns.map((t) => (t.id === turnId ? { ...t, feedback: vote ?? undefined } : t)),
+      })),
+    ),
+  dropFrom: (turnId) =>
+    set((s) =>
+      inSession(s, s.activeSession, (x) => {
+        const k = x.turns.findIndex((t) => t.id === turnId)
+        return k < 0 ? x : { ...x, turns: x.turns.slice(0, k) }
+      }),
+    ),
 
   // Deep on purpose. "Make the reactor red" arrives as a patch touching only
   // reactor.color, and a shallow merge would take the scale, spin and style
@@ -408,7 +541,9 @@ export const useStore = create<State>((set) => ({
       // screen, and leaving a full-height article standing while the cards
       // around it vanish is the interface arguing with the instruction.
       const blades = what === 'transcript' ? s.blades : []
-      const cleared = { panels, turns, blades, focusedBlade: null, expandedBlade: null }
+      // Clearing the transcript clears the session on screen.
+      const sessions = what === 'panels' ? s.sessions : s.sessions.map((x) => (x.id === s.activeSession ? { ...x, turns: [] } : x))
+      const cleared = { panels, turns, sessions, blades, focusedBlade: null, expandedBlade: null }
       return what === 'all'
         ? { ...cleared, caption: '', activeTool: null }
         : cleared
@@ -461,4 +596,24 @@ if (import.meta.env.DEV) {
       getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true }),
     },
   )
+}
+
+// The session list is kept in this browser, so it survives a reload. Saved a
+// moment after changes settle (streaming answers change it many times a second).
+if (typeof window !== 'undefined') {
+  let saveTimer = 0
+  let lastSaved: unknown = null
+  useStore.subscribe((s) => {
+    if (s.sessions === lastSaved) return
+    lastSaved = s.sessions
+    window.clearTimeout(saveTimer)
+    saveTimer = window.setTimeout(() => {
+      try {
+        const { sessions, activeSession } = useStore.getState()
+        localStorage.setItem(SESSIONS_KEY, JSON.stringify({ sessions: sessions.map((x) => ({ ...x, busy: false })), activeSession }))
+      } catch {
+        /* storage full or blocked: the list just won't survive a reload */
+      }
+    }, 800)
+  })
 }

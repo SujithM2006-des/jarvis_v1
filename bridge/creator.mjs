@@ -23,7 +23,8 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { VideoLimitError, geminiVideo, openGeminiLogin } from './geminiweb.mjs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, extname, join, normalize, resolve as resolvePath, sep } from 'node:path'
 import { readKeys } from './brain.mjs'
@@ -110,6 +111,9 @@ const filterPath = (p) => p.replace(/\\/g, '/').replace(/^([A-Za-z]):/, '$1\\:')
 
 const SIZES = { '9:16': [1080, 1920], '16:9': [1920, 1080], '1:1': [1080, 1080], '4:5': [1080, 1350] }
 const FONT = existsSync('C:/Windows/Fonts/segoeuib.ttf') ? 'C:/Windows/Fonts/segoeuib.ttf' : 'C:/Windows/Fonts/arial.ttf'
+/** Tamil script; subtitles in it need a font that has it (Nirmala UI, on every Windows 10/11). */
+const TAMIL = /[\u0B80-\u0BFF]/
+const TAMIL_FONT = existsSync('C:/Windows/Fonts/Nirmala.ttc') ? 'C:/Windows/Fonts/Nirmala.ttc' : existsSync('C:/Windows/Fonts/latha.ttf') ? 'C:/Windows/Fonts/latha.ttf' : FONT
 
 /** Wrap text into lines of about `width` characters, for subtitles. */
 function wrap(s, width) {
@@ -129,8 +133,15 @@ function wrap(s, width) {
 function drawText(file, { w, h, place = 'bottom', size }) {
   const fs = size ?? Math.round(Math.min(w, h) / 17)
   const y = place === 'top' ? `${Math.round(h * 0.08)}` : place === 'center' ? '(h-text_h)/2' : `h-text_h-${Math.round(h * 0.12)}`
+  // Tamil text gets a Tamil font (ffmpeg's HarfBuzz shaping joins the letters).
+  let font = FONT
+  try {
+    if (TAMIL.test(readFileSync(file, 'utf8'))) font = TAMIL_FONT
+  } catch {
+    /* no file yet: the default font */
+  }
   return (
-    `drawtext=fontfile='${filterPath(FONT)}':textfile='${filterPath(file)}':fontcolor=white:fontsize=${fs}` +
+    `drawtext=fontfile='${filterPath(font)}':textfile='${filterPath(file)}':fontcolor=white:fontsize=${fs}` +
     `:line_spacing=${Math.round(fs * 0.3)}:x=(w-text_w)/2:y=${y}:box=1:boxcolor=black@0.45:boxborderw=${Math.round(fs * 0.45)}`
   )
 }
@@ -171,7 +182,41 @@ async function firstOf(models, body, timeoutMs) {
 const IMAGE_MODELS = ['gemini-2.5-flash-image', 'gemini-3.1-flash-image', 'gemini-3.1-flash-lite-image']
 // 3.8 and 3.1 answered on a free key; 2.5 refused short lines ("tried to generate text").
 const TTS_MODELS = ['gemini-3.8-flash-tts', 'gemini-3.1-flash-tts-preview', 'gemini-2.5-flash-preview-tts']
-export const VOICES = ['Kore', 'Puck', 'Charon', 'Aoede', 'Fenrir', 'Leda', 'Orus', 'Zephyr']
+/**
+ * Tamil voices: Microsoft's neural voices through edge-tts (free, no key; in
+ * the wake listener's Python). Tamil text with any other voice uses Pallavi.
+ */
+const TAMIL_VOICES = {
+  Pallavi: 'ta-IN-PallaviNeural',
+  Valluvar: 'ta-IN-ValluvarNeural',
+  Saranya: 'ta-LK-SaranyaNeural',
+  Kumar: 'ta-LK-KumarNeural',
+}
+const EDGE_TTS = join(homedir(), '.jarvis', 'wake-venv', 'Scripts', 'edge-tts.exe')
+const GEMINI_VOICES = ['Kore', 'Puck', 'Charon', 'Aoede', 'Fenrir', 'Leda', 'Orus', 'Zephyr']
+export const VOICES = [...GEMINI_VOICES, ...Object.keys(TAMIL_VOICES)]
+
+/** Tamil speech with edge-tts, to a WAV; null if it isn't available. */
+async function speakTamil(say, voice, file) {
+  if (!existsSync(EDGE_TTS)) return null
+  const id = TAMIL_VOICES[voice] ?? (/valluvar|male|man|ஆண்/i.test(String(voice)) ? TAMIL_VOICES.Valluvar : TAMIL_VOICES.Pallavi)
+  const txt = `${file}.txt`
+  const mp3 = `${file}.mp3`
+  writeFileSync(txt, say)
+  try {
+    await new Promise((res, rej) =>
+      execFile(EDGE_TTS, ['--voice', id, '--file', txt, '--write-media', mp3], { windowsHide: true, timeout: 180_000 }, (err) => (err ? rej(err) : res())),
+    )
+    await ffmpeg(['-i', mp3, '-ar', '24000', '-ac', '1', file])
+    return { file, by: `Tamil (${Object.keys(TAMIL_VOICES).find((k) => TAMIL_VOICES[k] === id)})` }
+  } catch (err) {
+    console.log(`[jarvis] Tamil voice failed (${String(err.message).slice(0, 120)})`)
+    return null
+  } finally {
+    rmSync(txt, { force: true })
+    rmSync(mp3, { force: true })
+  }
+}
 
 let lastFreeImage = 0
 
@@ -248,6 +293,11 @@ function wav(pcm, rate) {
 
 /** Speech to a WAV: Gemini's voices, or the Windows voice without a key / internet. */
 export async function speak(say, voice, file) {
+  // Tamil: a Tamil voice was asked for, or the text is in Tamil script.
+  if (TAMIL_VOICES[voice] || TAMIL.test(say)) {
+    const t = await speakTamil(say, voice, file)
+    if (t) return t
+  }
   if (geminiKey()) {
     try {
       const { j } = await firstOf(
@@ -256,7 +306,7 @@ export async function speak(say, voice, file) {
           contents: [{ parts: [{ text: say }] }],
           generationConfig: {
             responseModalities: ['AUDIO'],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICES.includes(voice) ? voice : 'Kore' } } },
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: GEMINI_VOICES.includes(voice) ? voice : 'Kore' } } },
           },
         },
         120_000,
@@ -298,8 +348,14 @@ async function veoModel() {
   }
 }
 
-/** Build a reel: one clip per scene (image + voice + subtitles + zoom), joined. */
-export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore', subtitles = true, music }) {
+/**
+ * Build a reel: one clip per scene, joined. motion 'ai' (default): a real
+ * animated Veo clip per scene through the user's Gemini plan, with the voice
+ * over Veo's own sound (kept low) and subtitles; when the plan's daily limit
+ * is reached, or Gemini isn't available, the remaining scenes fall back to
+ * 'still': a generated picture with a slow zoom.
+ */
+export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore', subtitles = true, music, motion = 'ai' }) {
   if (!findTool('ffmpeg')) throw new Error('ffmpeg is not installed yet, so videos cannot be put together.')
   const [W, H] = SIZES[aspect]
   const work = join(tmpdir(), `jarvis-reel-${stamp()}`)
@@ -307,11 +363,63 @@ export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore'
   try {
     const clips = []
     let voiceBy = ''
+    let aiOff = motion !== 'ai'
+    let aiClips = 0
+    let aiNote = ''
     for (const [i, s] of scenes.entries()) {
-      const img = await makeImage(`${s.visual}. Cinematic, high detail, no text in the image.`, aspect, join(work, `s${i}.png`))
       const v = await speak(s.narration, voice, join(work, `s${i}.wav`))
       voiceBy = v.by
-      const dur = Math.max(2, ((await duration(v.file)) ?? 4) + 0.6)
+      let dur = Math.max(2, ((await duration(v.file)) ?? 4) + 0.6)
+      const clip = join(work, `s${i}.mp4`)
+
+      // Real motion: a Veo clip of the scene.
+      let moving = null
+      if (!aiOff) {
+        try {
+          const r = await geminiVideo(
+            `${s.visual}. Cinematic, realistic natural motion, smooth camera movement. No text, captions, subtitles or watermarks in the video. No dialogue.`,
+            { aspect: aspect === '16:9' ? '16:9' : '9:16', out: join(work, `s${i}-ai.mp4`) },
+          )
+          moving = r.file
+          aiClips++
+        } catch (err) {
+          aiNote = err instanceof VideoLimitError ? "Gemini's daily video limit was reached" : String(err.message).split('\n')[0].slice(0, 160)
+          // Limits, sign-in and missing tools won't fix themselves mid-reel.
+          if (err instanceof VideoLimitError || /signed in|Create video|not installed|start/i.test(err.message)) aiOff = true
+          console.log(`[jarvis] AI video for scene ${i + 1} failed (${aiNote}) - using a still`)
+        }
+      }
+      if (moving) {
+        // The scene runs the whole AI clip (up to 10 s), or longer if the narration needs it.
+        dur = Math.max(dur, Math.min(10, (await duration(moving).catch(() => null)) ?? 0))
+        const vf = [
+          `scale=${W}:${H}:force_original_aspect_ratio=increase`,
+          `crop=${W}:${H}`,
+          // Narration longer than the clip: hold its last frame.
+          `tpad=stop_mode=clone:stop_duration=${Math.ceil(dur)}`,
+          'fps=30',
+        ]
+        if (subtitles) {
+          const tf = join(work, `s${i}.txt`)
+          const width = (aspect === '9:16' ? 26 : 42) * (TAMIL.test(s.narration) ? 0.8 : 1)
+          writeFileSync(tf, wrap(s.narration, Math.round(width)))
+          vf.push(drawText(tf, { w: W, h: H }))
+        }
+        const audio = (await hasAudio(moving))
+          ? '[0:a]volume=0.22,apad[bg];[1:a]apad[vo];[bg][vo]amix=inputs=2:duration=longest:normalize=0[a]'
+          : '[1:a]apad[a]'
+        await ffmpeg([
+          '-i', moving, '-i', v.file,
+          '-filter_complex', `[0:v]${vf.join(',')}[v];${audio}`,
+          '-map', '[v]', '-map', '[a]',
+          '-t', dur.toFixed(2), '-r', '30', '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+          '-c:a', 'aac', '-ar', '48000', '-ac', '2', clip,
+        ])
+        clips.push(clip)
+        continue
+      }
+
+      const img = await makeImage(`${s.visual}. Cinematic, high detail, no text in the image.`, aspect, join(work, `s${i}.png`))
       const frames = Math.ceil(dur * 30)
       const vf = [
         `scale=${Math.round(W * 1.15)}:${Math.round(H * 1.15)}:force_original_aspect_ratio=increase`,
@@ -320,10 +428,11 @@ export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore'
       ]
       if (subtitles) {
         const tf = join(work, `s${i}.txt`)
-        writeFileSync(tf, wrap(s.narration, aspect === '9:16' ? 26 : 42))
+        // Tamil letters run wider: shorter lines.
+        const width = (aspect === '9:16' ? 26 : 42) * (TAMIL.test(s.narration) ? 0.8 : 1)
+        writeFileSync(tf, wrap(s.narration, Math.round(width)))
         vf.push(drawText(tf, { w: W, h: H }))
       }
-      const clip = join(work, `s${i}.mp4`)
       await ffmpeg([
         '-loop', '1', '-i', img, '-i', v.file,
         '-vf', vf.join(','), '-af', 'apad=pad_dur=0.6',
@@ -346,7 +455,7 @@ export async function buildReel({ title, scenes, aspect = '9:16', voice = 'Kore'
     } else {
       await ffmpeg(['-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', final])
     }
-    return { file: final, seconds: await duration(final).catch(() => null), voiceBy }
+    return { file: final, seconds: await duration(final).catch(() => null), voiceBy, aiClips, aiNote }
   } finally {
     rmSync(work, { recursive: true, force: true })
   }
@@ -501,10 +610,13 @@ export function creatorServer() {
       ),
       tool(
         'make_reel',
-        'Make a video from a script: for each scene, a generated image of `visual`, the `narration` ' +
-          'voiced and shown as subtitles, with a slow zoom; scenes joined into one MP4 in Videos\\Jarvis. ' +
-          '9:16 suits Reels/Shorts. Takes about 20-40 s per scene. Write short narrations (one or two ' +
-          'sentences per scene) and vivid visual descriptions.',
+        'Make a video from a script, scenes joined into one MP4 in Videos\\Jarvis, each scene\'s ' +
+          '`narration` voiced and shown as subtitles. motion "ai" (default): each scene is a REAL ' +
+          'animated AI video of `visual` (Veo, through the user\'s Gemini plan — 1-4 minutes per scene, ' +
+          'a few per day); when the daily limit is reached, the rest become "still" scenes (a ' +
+          'generated picture with a slow zoom, ~20 s each). 9:16 suits Reels/Shorts. Write short ' +
+          'narrations (one or two sentences per scene) and vivid, concrete visual descriptions of the ' +
+          'action and camera movement.',
         {
           title: z.string(),
           scenes: z.array(z.object({ narration: z.string(), visual: z.string() })).min(1).max(12),
@@ -512,15 +624,24 @@ export function creatorServer() {
           voice: z.string().optional(),
           subtitles: z.boolean().optional().describe('Default true'),
           music: z.string().optional().describe('Optional path to a music file, mixed in quietly'),
+          motion: z.enum(['ai', 'still']).optional().describe('ai (default): real animated AI video per scene; still: pictures with a slow zoom'),
         },
         async (args) => {
           const t0 = Date.now()
           try {
             const r = await buildReel(args)
             openFile(r.file)
+            const kind =
+              r.aiClips === args.scenes.length
+                ? 'all scenes animated with AI video'
+                : r.aiClips
+                  ? `${r.aiClips} of ${args.scenes.length} scenes animated with AI video, the rest as pictures (${r.aiNote})`
+                  : args.motion === 'still'
+                    ? 'pictures with a slow zoom'
+                    : `pictures with a slow zoom — no AI video (${r.aiNote || 'not available'})`
             return text(
               `Reel "${basename(r.file)}" made: ${args.scenes.length} scenes${r.seconds ? `, ${r.seconds.toFixed(0)} s` : ''}, ` +
-                `${args.aspect ?? '9:16'}, ${r.voiceBy} voice, in ${Math.round((Date.now() - t0) / 1000)} s. ` +
+                `${args.aspect ?? '9:16'}, ${kind}, ${r.voiceBy} voice, in ${Math.round((Date.now() - t0) / 1000)} s. ` +
                 `Saved to ${r.file} and playing now.`,
             )
           } catch (err) {
@@ -530,17 +651,26 @@ export function creatorServer() {
       ),
       tool(
         'generate_video_clip',
-        "A real AI-generated video clip from a description, with Google's Veo — only if the Gemini " +
-          'key has Veo access (it needs billing enabled on the Gemini account). Without it, say so and ' +
-          'offer make_reel instead.',
+        "One real AI-generated video clip (about 8-10 s, with sound) from a description, with Google's " +
+          "Veo: through the API key if it has Veo, otherwise through the user's Gemini plan in JARVIS's " +
+          'Gemini window (1-4 minutes; a few per day). Describe the subject, action, setting, mood and ' +
+          'camera movement.',
         { prompt: z.string(), aspect: z.enum(['9:16', '16:9']).optional(), name: z.string().optional() },
         async ({ prompt, aspect = '9:16', name }) => {
           const model = await veoModel()
           if (!model) {
-            return failText(
-              "This Gemini key has no access to Veo, Google's video model — it needs billing turned on in the " +
-                'Gemini account. I can make the video from generated images, a voiceover and subtitles instead (make_reel).',
-            )
+            // The user's Gemini subscription, in the Gemini app.
+            const f = outFile(OUT.videos, name ?? `ai video ${stamp()}`, '.mp4')
+            try {
+              const r = await geminiVideo(prompt, { aspect, out: f })
+              openFile(f)
+              return text(`AI video made with Veo through Gemini in ${r.seconds} s: ${f} (playing now).`)
+            } catch (err) {
+              if (err instanceof VideoLimitError) {
+                return failText(`Gemini's video limit for today is reached (${err.message}). I can make it as pictures with motion instead (make_reel, motion "still").`)
+              }
+              return failText(`Couldn't make the AI video: ${err.message}`)
+            }
           }
           const key = geminiKey()
           try {
@@ -565,6 +695,20 @@ export function creatorServer() {
             return text(`Video clip made with ${model}: ${f}`)
           } catch (err) {
             return failText(`Veo could not make the clip: ${err.message}`)
+          }
+        },
+      ),
+      tool(
+        'gemini_login',
+        "Open JARVIS's Gemini window so the user can sign in to their Google account (once) — needed " +
+          'for AI videos through their Gemini plan. They type the password themselves.',
+        {},
+        async () => {
+          try {
+            await openGeminiLogin()
+            return text("Gemini's sign-in window is open. Once they're signed in, AI videos will work.")
+          } catch (err) {
+            return failText(`Couldn't open the Gemini window: ${err.message}`)
           }
         },
       ),
@@ -602,12 +746,24 @@ export const PROMPT_CREATOR = `Creating things — the jarvis_creator tools:
 - "Write a script for my reel about …": write it yourself — a hook in the first
   line, short punchy scenes, a call to action — show it on screen, and save it
   with save_document if asked.
-- "Make a video of this script": make_reel (images + voiceover + subtitles,
-  9:16 by default). If they want a real AI video, try generate_video_clip; it
-  says plainly when the key cannot. Tell them it takes a minute or two.
+- "Make a video / reel of this script": make_reel. By default every scene is a
+  REAL animated AI video (Veo, through their Gemini plan), voiced and
+  subtitled — like trending AI reels. Keep it to 3-4 scenes of about 8 seconds
+  (the plan allows only a few videos a day; past the limit the rest become
+  pictures with motion), and write each visual as a moving shot: subject,
+  action, setting, light, camera move. Tell them it takes a few minutes and
+  say plainly if some scenes came out as pictures, and why. motion "still"
+  only when they want it quick or the limit is used up.
+- One short AI clip: generate_video_clip.
+- If AI video says they aren't signed in: gemini_login, then they sign in once.
 - "Edit the video …", "add a voiceover", "cut the first 5 seconds", "make it
   vertical": edit_video on the file (the last video you made unless they name
   one). "Give it a voiceover" with a script: the voiceover step in edit_video.
 - Images: generate_image. Voice files alone: voiceover.
+- Tamil voiceover ("in Tamil", "Tamil voice", "தமிழில்"): write the narration
+  itself in natural, spoken Tamil script (not English, not transliteration)
+  and use voice Pallavi (female, default) or Valluvar (male); Saranya and Kumar
+  are Sri Lankan Tamil. Subtitles then come out in Tamil too. Visual
+  descriptions for the images stay in English.
 
 `

@@ -46,8 +46,10 @@ function bannerWith(overrides) {
   })
 }
 
-test('unset passes every configured server, as before', async () => {
-  assert.match(await bannerWith({}), /config: search, mailer ·/)
+// Unset now passes none: every server's tools ride along with every request,
+// and the ones in a Claude Code config are not JARVIS's (token use).
+test('unset passes no configured server', async () => {
+  assert.match(await bannerWith({}), /config: none/)
 })
 
 test('JARVIS_MCP_SERVERS passes only the named servers', async () => {

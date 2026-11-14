@@ -181,7 +181,8 @@ export function Hud() {
       {/* First in the tree on purpose. Everything after it is positioned with
           `z-index: auto`, so paint order is document order and the sweep stays
           behind the transcript and the panels without a z-index war. */}
-      <BladeSweep />
+      {/* A custom layout can turn the tool sweep off ('sweep'). */}
+      {!hiddenNow.includes('sweep') && <BladeSweep />}
 
       <Corner at="tl" />
       <Corner at="tr" />
@@ -217,7 +218,7 @@ export function Hud() {
       {ui.chrome.systems && !hiddenNow.includes('telemetry') && <Telemetry />}
 
       <AnimatePresence>
-        {activeTool && ui.chrome.toolBadge && (
+        {activeTool && ui.chrome.toolBadge && !hiddenNow.includes('toolbadge') && (
           <motion.div
             className="tool-badge"
             // Anchored to the TOP of the frame, not the middle. The old home was

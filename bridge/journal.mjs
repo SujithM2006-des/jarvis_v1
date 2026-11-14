@@ -25,8 +25,10 @@ const MAX_ENTRIES = 5000
 /** Carried into each new session. */
 // Kept modest: this rides along on every turn of every session, so it is paid
 // for again and again. Anything older is one search_history call away.
-const RECENT_ENTRIES = 24
-const RECENT_CHARS = 7_000
+// Kept short: this rides along with every request (tokens on each turn).
+// Older history is still searchable with search_history.
+const RECENT_ENTRIES = 12
+const RECENT_CHARS = 3_000
 
 const clip = (s, n) => {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim()

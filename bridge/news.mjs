@@ -141,7 +141,7 @@ const ago = (t) => {
 }
 
 /** A short block for the system prompt: the newest few per sector. */
-export function newsPrompt(perSector = 3) {
+export function newsPrompt(perSector = 2) {
   const items = storedNews(2)
   if (!items.length) return ''
   const lines = []

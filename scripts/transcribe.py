@@ -17,7 +17,12 @@ from pathlib import Path
 
 from vosk import KaldiRecognizer, Model, SetLogLevel
 
-MODEL = Path(os.environ["USERPROFILE"]) / ".jarvis" / "vosk" / "vosk-model-small-en-in-0.4"
+_VOSK = Path(os.environ["USERPROFILE"]) / ".jarvis" / "vosk"
+# The big Indian English model when installed (far more accurate), else the small one.
+MODEL = next(
+    (p for p in (_VOSK / "vosk-model-en-in-0.5", _VOSK / "vosk-model-small-en-in-0.4") if p.exists()),
+    _VOSK / "vosk-model-small-en-in-0.4",
+)
 
 
 def main(path):

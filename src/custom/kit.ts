@@ -50,6 +50,10 @@ export type Status = {
 export type StockPart =
   | 'frame' | 'header' | 'telemetry' | 'dock' | 'suggestions' | 'scene'
   | 'scanlines' | 'caption' | 'hints' | 'transcript' | 'error'
+  /** The "ACCESSING <tool>" badge at the top while a tool runs. */
+  | 'toolbadge'
+  /** The diagonal light sweeps (and the tool name riding them) while a tool runs. */
+  | 'sweep'
 
 let hidden: readonly string[] = []
 const hiddenSubs = new Set<() => void>()
@@ -171,6 +175,8 @@ export type Profile = {
   theme: string
   /** The centre orb's design (see orbs.tsx). */
   orb: string
+  /** Gmail, Calendar & Drive through the claude.ai account (off by default: costs usage). */
+  connectors?: boolean
   features: Record<string, boolean>
   /** Who made JARVIS. Fixed in the code; not part of anyone's settings. */
   creator: string
@@ -263,6 +269,43 @@ export const setBrain = (choice: string) =>
     brainSubs.forEach((f) => f())
     return ok
   })
+
+/** One AI's usage over a period. `input` includes new cache writes. */
+export type UsageLine = { requests: number; input: number; output: number; cached: number; cost: number; limits: number }
+/** One limit meter: "Session (5hr) 54%, resets at 3:40 PM". */
+export type LimitMeter = { label: string; pct: number; detail?: string; resetsAt?: string | null }
+export type Usage = {
+  day: string
+  today: Record<string, UsageLine>
+  week: Record<string, UsageLine>
+  /** Per connected AI: its limit meters (as the provider reports them) and a note. */
+  limits: Record<string, { note: string | null; meters: LimitMeter[] }>
+  brains: Brains
+  labels: Record<string, string>
+}
+
+/** Model usage per AI (today and the last 7 days), refreshed every 10 s. */
+export function useUsage(): Usage | null {
+  const [u, set] = useState<Usage | null>(null)
+  useEffect(() => {
+    let alive = true
+    const pull = async () => {
+      try {
+        const res = await fetch(`${BRIDGE_HTTP_URL}/usage`, { cache: 'no-store' })
+        if (res.ok && alive) set(await res.json())
+      } catch {
+        /* bridge down: keep the last reading */
+      }
+    }
+    void pull()
+    const id = window.setInterval(pull, 10_000)
+    return () => {
+      alive = false
+      window.clearInterval(id)
+    }
+  }, [])
+  return u
+}
 
 /** Open the setup screen (name, city, voice, look, features). */
 export function openSetup() {
@@ -367,6 +410,61 @@ export function useJarvis() {
   const activeTool = useStore((s) => s.activeTool)
   const error = useStore((s) => s.error)
   return { phase, level, caption, turns, activeTool, error }
+}
+
+/**
+ * Sessions: separate conversations, each with its own agent, running side by
+ * side. Requests go to the one on screen (`active`); the others carry on in
+ * the background and show `busy` while they work.
+ */
+export function useSessions() {
+  const sessions = useStore((s) => s.sessions)
+  const active = useStore((s) => s.activeSession)
+  return { sessions, active }
+}
+export const newSession = () => useStore.getState().newSession()
+export const switchSession = (id: string) => useStore.getState().switchSession(id)
+export const closeSession = (id: string) => useStore.getState().closeSession(id)
+
+/**
+ * The chat view: the session on screen shown as a chat (full transcript,
+ * written answers with formatting) instead of the orb. Turned on by a typed
+ * request for written content or a long written answer; off with the orb.
+ */
+export function useChat(): boolean {
+  return useStore((s) => Boolean(s.sessions.find((x) => x.id === s.activeSession)?.chat))
+}
+export const setChat = (on: boolean) => useStore.getState().setChat(on)
+
+export type { Turn } from '../store'
+
+/**
+ * Thumbs up / down on an answer (again, or null, to take it back). Kept on
+ * the turn and sent to the bridge, which remembers recent thumbs-down notes
+ * so the same mistake isn't repeated. `reason`: optional, for a thumbs down.
+ */
+export function rateAnswer(turnId: string, vote: 'up' | 'down' | null, request: string, reply: string, reason = '') {
+  useStore.getState().setFeedback(turnId, vote)
+  return post('/feedback', { vote, request, reply, reason })
+}
+
+/** Ask again for a different answer: the old exchange goes, the request is resent. */
+export function retryAnswer(userTurnId: string, request: string) {
+  useStore.getState().dropFrom(userTurnId)
+  return ask(`[Retry] ${request}`)
+}
+
+/** Read a written answer aloud (code blocks skipped); stop with stopReading(). */
+export function readAloud(text: string) {
+  window.dispatchEvent(new CustomEvent('jarvis-read', { detail: text }))
+}
+export function stopReading() {
+  window.dispatchEvent(new Event('jarvis-read-stop'))
+}
+
+/** Whether the session on screen is working on a request. */
+export function useSessionBusy(): boolean {
+  return useStore((s) => Boolean(s.sessions.find((x) => x.id === s.activeSession)?.busy))
 }
 
 /** A short word for the phase, for a status pill. */
